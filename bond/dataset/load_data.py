@@ -39,7 +39,7 @@ def load_dataset(mode):
     if mode == "train":
         data_path = join(args.save_path, "src", "train", "train_author.json")
     elif mode == "valid":
-        data_path = join(args.save_path, "src", "sna-valid", "sna_valid_raw.json")
+        data_path = join(args.save_path, "src", "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\converted_metadata_raw.json")
     elif mode == "test":
         data_path = join(args.save_path, "src", "sna-test", "sna_test_raw.json")
 

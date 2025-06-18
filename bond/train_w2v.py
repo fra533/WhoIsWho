@@ -86,7 +86,7 @@ def dump_corpus():
     dump texts for word2vec trainning.
     """
     train_pub = join(args.save_path, 'src', 'train', 'train_pub.json')
-    valid_pub = join(args.save_path, 'src', 'sna-valid', 'sna_valid_pub.json')
+    valid_pub = join(args.save_path, 'src', 'sna-valid', r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\converted_metadata.json')
     test_pub = join(args.save_path, 'src', 'sna-test', 'sna_test_pub.json')
     pub_files = [train_pub, valid_pub, test_pub]
     texts_dir = join(args.save_path, 'extract_text')

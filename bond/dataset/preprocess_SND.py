@@ -35,7 +35,7 @@ def read_pubinfo(mode):
     if mode == 'train':
         pubs = load_json(join(base, "train", "train_pub.json"))
     elif mode == 'valid':
-        pubs = load_json(join(base, "sna-valid", "sna_valid_pub.json"))
+        pubs = load_json(join(base, "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\converted_metadata.json"))
     elif mode == 'test':
         pubs = load_json(join(base, 'sna-test', 'sna_test_pub.json'))
     else:
@@ -53,7 +53,7 @@ def read_raw_pubs(mode):
     if mode == 'train':
         raw_pubs = load_json(join(base, "train", "train_author.json"))
     elif mode == 'valid':
-        raw_pubs = load_json(join(base, "sna-valid", "sna_valid_raw.json"))
+        raw_pubs = load_json(join(base, "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\converted_metadata_raw.json"))
     elif mode == 'test':
         raw_pubs = load_json(join(base, "sna-test", "sna_test_raw.json"))
     else:
