@@ -12,13 +12,16 @@ def evaluate(predict_result, ground_truth):
     if isinstance(ground_truth, str):
         ground_truth = load_json(ground_truth)
 
+    filtered_predict_result = {name: pred for name, pred in predict_result.items() 
+                              if name in ground_truth}
+
     name_nums = 0
     result_list = []
     
-    for name in predict_result:
+    for name in filtered_predict_result:
         # Get clustering labels in predict_result
         predicted_pubs = dict()
-        for idx, pids in enumerate(predict_result[name]):
+        for idx, pids in enumerate(filtered_predict_result[name]):
             for pid in pids:
                 predicted_pubs[pid] = idx
         
@@ -47,11 +50,14 @@ def evaluate(predict_result, ground_truth):
                     true_labels.append(ilabel)
                     ilabel += 1
 
+        filtered_pubs = [pid for pid in pubs if pid in predicted_pubs]
+        filtered_true_labels = [true_labels[i] for i, pid in enumerate(pubs) if pid in predicted_pubs]
+
         predict_labels = []
-        for pid in pubs:
+        for pid in filtered_pubs:
             predict_labels.append(predicted_pubs[pid])
 
-        pairwise_precision, pairwise_recall, pairwise_f1 = pairwise_evaluate(true_labels, predict_labels)
+        pairwise_precision, pairwise_recall, pairwise_f1 = pairwise_evaluate(filtered_true_labels, predict_labels)
         result_list.append((pairwise_precision, pairwise_recall, pairwise_f1))
         name_nums += 1
 
