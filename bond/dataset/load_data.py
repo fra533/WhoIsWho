@@ -174,6 +174,7 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
 
     # Build graph
     edge_index = torch.cat([torch.tensor(srcs).unsqueeze(0), torch.tensor(dsts).unsqueeze(0)], dim=0)
+    edge_index = edge_index.long() 
     edge_attr = torch.tensor(attr, dtype=torch.float32)
     edge_weight = torch.tensor(value, dtype=torch.float32)
     data = Data(edge_index=edge_index, edge_attr=edge_attr, edge_weight=edge_weight)

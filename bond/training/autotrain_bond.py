@@ -6,6 +6,7 @@ from datetime import datetime
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import pairwise_distances
 
+from torch_geometric.utils import negative_sampling #aggiunto
 from torch_geometric.nn import GAE
 from loadmodel.att_gnn import ATTGNN
 from dataset.load_data import load_dataset, load_graph
@@ -26,6 +27,30 @@ torch.cuda.manual_seed(seed)
 
 device = torch.device(("cuda:"+str(args.gpu)) if torch.cuda.is_available() and args.cuda else "cpu")
 
+def safe_recon_loss(model, z, pos_edge_index):
+    """
+    Versione sicura di recon_loss che forza i tipi corretti per evitare IndexError
+    """
+    # Assicurati che pos_edge_index sia long
+    pos_edge_index = pos_edge_index.long()
+    
+    # Genera negative sampling con tipo corretto
+    neg_edge_index = negative_sampling(
+        edge_index=pos_edge_index,
+        num_nodes=z.size(0),
+        num_neg_samples=pos_edge_index.size(1)
+    ).long()  # Forza long anche per il negative sampling
+    
+    # Calcola decoder output per positive edges
+    pos_out = model.decoder(z, pos_edge_index, sigmoid=True)
+    # Calcola decoder output per negative edges  
+    neg_out = model.decoder(z, neg_edge_index, sigmoid=True)
+    
+    # Calcola le loss
+    pos_loss = -torch.log(pos_out + 1e-15).mean()
+    neg_loss = -torch.log(1 - neg_out + 1e-15).mean()
+    
+    return pos_loss + neg_loss
 
 class BONDTrainer:
     def __init__(self) -> None:
@@ -190,7 +215,10 @@ class BONDTrainer:
                 global_label = torch.matmul(logits, logits.t())
                 
                 loss_cluster = F.binary_cross_entropy_with_logits(global_label, local_label)
-                loss_recon = model.recon_loss(embd, data.edge_index)
+                #loss_recon = model.recon_loss(embd, data.edge_index) #rimosso
+                loss_recon = safe_recon_loss(model, embd, data.edge_index) #aggiunto
+
+
                 w_cluster = args.cluster_w
                 w_recon = 1 - w_cluster
                 loss_train = w_cluster * loss_cluster + w_recon * loss_recon
