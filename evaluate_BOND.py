@@ -96,7 +96,7 @@ def pairwise_evaluate(correct_labels, pred_labels):
 
 
 if __name__ == '__main__':
-    predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json'
+    predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res_official.json'
     ground_truth = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_example.json'
 
     evaluate(predict,ground_truth)
