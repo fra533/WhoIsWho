@@ -6,7 +6,6 @@ from datetime import datetime
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import pairwise_distances
 
-from torch_geometric.utils import negative_sampling #aggiunto
 from torch_geometric.nn import GAE
 from loadmodel.att_gnn import ATTGNN
 from dataset.load_data import load_dataset, load_graph
@@ -26,31 +25,6 @@ torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
 
 device = torch.device(("cuda:"+str(args.gpu)) if torch.cuda.is_available() and args.cuda else "cpu")
-
-def safe_recon_loss(model, z, pos_edge_index):
-    """
-    Versione sicura di recon_loss che forza i tipi corretti per evitare IndexError
-    """
-    # Assicurati che pos_edge_index sia long
-    pos_edge_index = pos_edge_index.long()
-    
-    # Genera negative sampling con tipo corretto
-    neg_edge_index = negative_sampling(
-        edge_index=pos_edge_index,
-        num_nodes=z.size(0),
-        num_neg_samples=pos_edge_index.size(1)
-    ).long()  # Forza long anche per il negative sampling
-    
-    # Calcola decoder output per positive edges
-    pos_out = model.decoder(z, pos_edge_index, sigmoid=True)
-    # Calcola decoder output per negative edges  
-    neg_out = model.decoder(z, neg_edge_index, sigmoid=True)
-    
-    # Calcola le loss
-    pos_loss = -torch.log(pos_out + 1e-15).mean()
-    neg_loss = -torch.log(1 - neg_out + 1e-15).mean()
-    
-    return pos_loss + neg_loss
 
 class BONDTrainer:
     def __init__(self) -> None:
@@ -159,6 +133,11 @@ class BONDTrainer:
     def fit(self, datatype):
         names, pubs = load_dataset(datatype)
         results = {}
+        
+        # Statistiche per monitorare gli skip
+        total_authors = len(names)
+        skipped_authors = 0
+        small_graph_info = []
 
         f1_list = []
         for name in names:
@@ -167,6 +146,48 @@ class BONDTrainer:
 
             # ==== Load data ====
             label, ft_list, data = load_graph(name)
+            
+            # SOLUZIONE: Skip grafi troppo piccoli o senza edge
+            n_nodes = ft_list.shape[0]
+            n_edges = data.edge_index.shape[1]
+            
+            if n_nodes < 5 or n_edges == 0:
+                print(f"SKIPPING {name}: graph too small/empty (nodes={n_nodes}, edges={n_edges})")
+                print(f"  → Assigning each paper to separate cluster")
+                # Ogni paper diventa un cluster separato
+                results[name] = list(range(n_nodes))
+                skipped_authors += 1
+                small_graph_info.append((name, n_nodes, n_edges))
+                continue
+            
+            # Test preliminare per rilevare grafi problematici
+            try:
+                # Prova a fare un forward pass di test
+                test_model = GAE(ATTGNN([ft_list.shape[1]] + args.hidden_dim + [int(ft_list.shape[0]*args.compress_ratio)]))
+                test_model.to(device)
+                with torch.no_grad():
+                    test_logits, test_embd = test_model.encode(ft_list.float().to(device), data.edge_index.to(device), data.edge_attr.to(device) if data.edge_attr is not None else None)
+                    test_recon = test_model.recon_loss(test_embd, data.edge_index.to(device))
+                    if torch.isnan(test_recon):
+                        print(f"SKIPPING {name}: graph causes NaN in reconstruction (nodes={n_nodes}, edges={n_edges})")
+                        print(f"  → Assigning each paper to separate cluster")
+                        results[name] = list(range(n_nodes))
+                        skipped_authors += 1
+                        small_graph_info.append((name, n_nodes, n_edges, "NaN"))
+                        continue
+                del test_model  # Libera memoria
+            except Exception as e:
+                print(f"SKIPPING {name}: graph causes error during test (nodes={n_nodes}, edges={n_edges})")
+                print(f"  → Error: {e}")
+                print(f"  → Assigning each paper to separate cluster")
+                results[name] = list(range(n_nodes))
+                skipped_authors += 1
+                small_graph_info.append((name, n_nodes, n_edges, "Error"))
+                continue
+            
+            # CORREZIONE CRITICA: Assicurati che edge_index sia di tipo long
+            data.edge_index = data.edge_index.long()
+            
             num_cluster = int(ft_list.shape[0]*args.compress_ratio)
             layer_shape = []
             input_layer_shape = ft_list.shape[1]
@@ -199,6 +220,7 @@ class BONDTrainer:
                 # ==== Train ====
                 model.train()
                 optimizer.zero_grad()
+                
                 logits, embd = model.encode(ft_list, data.edge_index, data.edge_attr)
                 dis = pairwise_distances(embd.cpu().detach().numpy(), metric='cosine')
                 db_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(dis) 
@@ -215,9 +237,12 @@ class BONDTrainer:
                 global_label = torch.matmul(logits, logits.t())
                 
                 loss_cluster = F.binary_cross_entropy_with_logits(global_label, local_label)
-                #loss_recon = model.recon_loss(embd, data.edge_index) #rimosso
-                loss_recon = safe_recon_loss(model, embd, data.edge_index) #aggiunto
-
+                loss_recon = model.recon_loss(embd, data.edge_index)
+                
+                # Controllo per NaN - se si verifica, skippa questo epoch
+                if torch.isnan(loss_cluster) or torch.isnan(loss_recon):
+                    print(f"  WARNING: NaN detected at epoch {epoch} (cluster: {loss_cluster.item()}, recon: {loss_recon.item()})")
+                    continue
 
                 w_cluster = args.cluster_w
                 w_recon = 1 - w_cluster
@@ -258,5 +283,24 @@ class BONDTrainer:
                 # Save results
                 results[name] = pred
 
+        # Stampa statistiche finali
+        print("\n" + "="*50)
+        print("TRAINING COMPLETED - STATISTICS")
+        print("="*50)
+        print(f"Total authors: {total_authors}")
+        print(f"Successfully trained: {total_authors - skipped_authors}")
+        print(f"Skipped (too small): {skipped_authors}")
+        
+        if small_graph_info:
+            print(f"\nSkipped graphs details:")
+            for info in small_graph_info:
+                if len(info) == 3:  # Formato originale (name, nodes, edges)
+                    name, nodes, edges = info
+                    print(f"  - {name}: {nodes} nodes, {edges} edges (too small)")
+                else:  # Formato esteso (name, nodes, edges, reason)
+                    name, nodes, edges, reason = info
+                    print(f"  - {name}: {nodes} nodes, {edges} edges ({reason})")
+        
         result_path = save_results(names, pubs, results)
-        print("Done! Results saved:", result_path)
+        print(f"\nResults saved: {result_path}")
+        print("="*50)
