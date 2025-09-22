@@ -167,7 +167,7 @@ def build_graph():
         if mode == "train":
             raw_pubs = load_json(join(data_base, "train", "train_author.json"))
         elif mode == "valid":
-            raw_pubs = load_json(join(data_base, "sna-valid", "sna_valid_raw.json"))
+            raw_pubs = load_json(join(data_base, "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\converted_metadata_raw.json"))
         elif mode == "test":
             raw_pubs = load_json(join(data_base, "sna-test", "sna_test_raw.json"))
         
