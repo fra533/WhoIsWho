@@ -75,7 +75,14 @@ def evaluate(predict_result, ground_truth):
         print("Error: No names could be evaluated!")
         return 0.0
     
+    # MODIFICATO: Calcola medie di precision, recall e f1
+    avg_pairwise_precision = sum([result[0] for result in result_list]) / name_nums
+    avg_pairwise_recall = sum([result[1] for result in result_list]) / name_nums
     avg_pairwise_f1 = sum([result[2] for result in result_list]) / name_nums
+    
+    # MODIFICATO: Stampa tutte le metriche nel riepilogo finale
+    print(f'Average Pairwise Precision: {avg_pairwise_precision:.3f}')
+    print(f'Average Pairwise Recall: {avg_pairwise_recall:.3f}')
     print(f'Average Pairwise F1: {avg_pairwise_f1:.3f}')
     
     # AGGIUNTO: Statistiche utili
@@ -145,7 +152,7 @@ def debug_data_formats(predict_result, ground_truth, max_names=3):
 
 if __name__ == '__main__':
     predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json'
-    ground_truth = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_example.json'
+    ground_truth = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_ground_truth.json'
     
     # Prima il debug per capire i formati
     debug_data_formats(predict, ground_truth)
