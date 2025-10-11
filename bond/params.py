@@ -5,7 +5,7 @@ def set_params():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--cuda', type=bool, default=False)
+    parser.add_argument('--cuda', type=bool, default=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--epochs', type=int, default=50)
