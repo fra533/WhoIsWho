@@ -3,3 +3,8 @@ __pycache__/
 .idea/
 data*
 out*
+bond/bond_debug_expanded/expanded_features_results.csv
+hyperopt_results*
+bond_train_test_split*
+bond_unified_refined_analysis*
+tbr*
