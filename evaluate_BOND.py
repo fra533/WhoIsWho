@@ -152,7 +152,7 @@ def debug_data_formats(predict_result, ground_truth, max_names=3):
 
 if __name__ == '__main__':
     predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json'
-    ground_truth = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_ground_truth.json'
+    ground_truth = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\mio_valid_ground_truth.json"
     
     # Prima il debug per capire i formati
     debug_data_formats(predict, ground_truth)
