@@ -8,8 +8,9 @@ class ATTGNN(nn.Module):
     def __init__(self, layer_shape):
         super(ATTGNN, self).__init__()
         self.layer_shape = layer_shape
-        self.conv1 = GATConv(layer_shape[0], layer_shape[1], heads=1)
-        self.conv2 = GATConv(layer_shape[1], layer_shape[2], heads=1)
+        # MODIFICATO: Aggiunto edge_dim=5 per supportare [coauth, org, venue, cite_out, cite_in]
+        self.conv1 = GATConv(layer_shape[0], layer_shape[1], heads=1, edge_dim=5)
+        self.conv2 = GATConv(layer_shape[1], layer_shape[2], heads=1, edge_dim=5)
         self.clas_layer = nn.Parameter(torch.FloatTensor(layer_shape[-2], layer_shape[-1]))
         self.bias = nn.Parameter(torch.FloatTensor(1, layer_shape[-1]))
 
