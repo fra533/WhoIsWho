@@ -7,9 +7,9 @@ args = set_params()
 
 def pipeline(model):
     # Module-1: Data Loading
-    dump_name_pubs()
-    dump_features_relations_to_file()
-    build_graph()
+    #dump_name_pubs()
+    #dump_features_relations_to_file()
+    #build_graph()
 
     # Modules-2: Feature Creation & Module-3: Model Construction
     if model == 'bond':
