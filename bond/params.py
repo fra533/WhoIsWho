@@ -32,6 +32,13 @@ def set_params():
     parser.add_argument('--th_v', type=list, default=[1,2])
     parser.add_argument('--repeat_num', type=int, default=1)
     
+    # In params.py, dopo gli altri parametri:
+    parser.add_argument('--use_citations', type=bool, default=True)
+    parser.add_argument('--cite_out_weight', type=float, default=1.0)
+    parser.add_argument('--cite_in_weight', type=float, default=1.0)
+    parser.add_argument('--cite_out_th', type=float, default=0.0)
+    parser.add_argument('--cite_in_th', type=float, default=0.0)
+    
     args, _ = parser.parse_known_args()
     
     return args
