@@ -39,7 +39,7 @@ def load_dataset(mode):
     if mode == "train":
         data_path = join(args.save_path, "src", "train", "train_author.json")
     elif mode == "valid":
-        data_path = join(args.save_path, "src", "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\converted_metadata_raw.json")
+        data_path = join(args.save_path, "src", "sna-valid", "sna_valid_raw.json")
     elif mode == "test":
         data_path = join(args.save_path, "src", "sna-test", "sna_test_raw.json")
 
@@ -73,7 +73,6 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
         for pid in p_label.item():
             p_label_list.append(p_label.item()[pid])
         label = torch.LongTensor(p_label_list)
-
     else:
         label = []
     
@@ -82,7 +81,7 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
     ft_list = []
     for idx in feats.item():
         ft_list.append(feats.item()[idx])
-    ft_tensor = torch.stack(ft_list) # size: N * feature dimension
+    ft_tensor = torch.stack(ft_list)
 
     # Load edge
     temp = set()
@@ -93,12 +92,23 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
     srcs, dsts, value, attr = [], [], [], []
     for line in temp:
         toks = line.strip().split("\t")
-        if len(toks) == 7:
+        
+        # ===== MODIFICATO: Ora leggiamo 11 colonne invece di 7 =====
+        if len(toks) == 11:
             src, dst = int(toks[0]), int(toks[1])
-            val_a, val_o, val_v = int(toks[2]), int(toks[3]), int(toks[5])
-            attr_o, attr_v = float(toks[4]), float(toks[6])
+            val_a = int(toks[2])
+            val_o = int(toks[3])
+            attr_o = float(toks[4])
+            val_v = int(toks[5])
+            attr_v = float(toks[6])
+            val_cite_out = int(toks[7])      # NUOVO
+            attr_cite_out = float(toks[8])   # NUOVO
+            val_cite_in = int(toks[9])       # NUOVO
+            attr_cite_in = float(toks[10])   # NUOVO
+        # ===========================================================
         else:
             print('read adj_attr ERROR!\n')
+            continue
 
         if args.rel_on == 'a':
             if val_a > th_a:
@@ -130,42 +140,33 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
             else:
                 val_o = 0
 
-            if (val_a > th_a) and (val_o > th_o) and (val_v > th_v): #a, o, v
+            # ===== MODIFICATO: Include citazioni nella logica =====
+            # Considera un edge valido se c'è ALMENO UNA relazione forte
+            has_relation = (
+                (val_a > th_a) or 
+                (val_o > th_o) or 
+                (val_v > th_v) or 
+                (val_cite_out > 0) or  # NUOVO: almeno 1 co-citazione out
+                (val_cite_in > 0)      # NUOVO: almeno 1 co-citazione in
+            )
+            
+            if has_relation:
                 srcs.append(src)
                 dsts.append(dst)
-                value.append(val_a+val_o+val_v)
-                attr.append([float(val_a), float(attr_o), float(attr_v)])
-            elif (val_a > th_a) and (val_o > th_o) and (val_v <= th_v): #a, o
-                srcs.append(src)
-                dsts.append(dst)
-                value.append(val_a+val_o)
-                attr.append([float(val_a), float(attr_o), 0])
-            elif (val_a > th_a) and (val_o <= th_o) and (val_v > th_v): #a, v
-                srcs.append(src)
-                dsts.append(dst)
-                value.append(val_a+val_v)
-                attr.append([float(val_a), 0, float(attr_v)])   
-            elif (val_a > th_a) and (val_o <= th_o) and (val_v <= th_v): #a
-                srcs.append(src)
-                dsts.append(dst)
-                value.append(val_a)
-                attr.append([float(val_a), 0, 0])
-            elif (val_a <= th_a) and (val_o > th_o) and (val_v > th_v): #o, v
-                srcs.append(src)
-                dsts.append(dst)
-                value.append(val_o+val_v)
-                attr.append([0, float(attr_o), float(attr_v)])
-            elif (val_a <= th_a) and (val_o > th_o) and (val_v <= th_v): #o
-                srcs.append(src)
-                dsts.append(dst)
-                value.append(val_o)
-                attr.append([0, float(attr_o), 0])
-            elif (val_a <= th_a) and (val_o <= th_o) and (val_v > th_v): #v
-                srcs.append(src)
-                dsts.append(dst)
-                value.append(val_v)
-                attr.append([0, 0, float(attr_v)])
-        
+                
+                # Peso edge: somma di tutte le relazioni
+                total_weight = val_a + val_o + val_v + val_cite_out + val_cite_in
+                value.append(total_weight)
+                
+                # Attributi multi-dimensionali (5D ora)
+                attr.append([
+                    float(val_a), 
+                    float(attr_o), 
+                    float(attr_v),
+                    float(attr_cite_out),  # NUOVO
+                    float(attr_cite_in)    # NUOVO
+                ])
+            # ======================================================
         else:
             print('wrong relation set\n')
             break
