@@ -3,3 +3,9 @@ __pycache__/
 .idea/
 data*
 out*
+bond_train_test_split*
+hyperopt_results_bond_senza cit*
+train_test_split_robust*
+tbr*
+hyperopt_results*
+bond_unified_refined_analysis*
