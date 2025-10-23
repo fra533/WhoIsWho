@@ -3,15 +3,15 @@ import re
 from tqdm import tqdm
 from os.path import join
 
-from params import set_params
-from dataset.dump_graph import build_graph
-from dataset.load_data import load_json
-from dataset.save_results import dump_json, check_mkdir
-from character.match_name import match_name
+from bond.params import set_params
+from bond.dataset.dump_graph import build_graph
+from bond.dataset.load_data import load_json
+from bond.dataset.save_results import dump_json, check_mkdir
+from bond.character.match_name import match_name
 
 args = set_params()
 
-puncs = '[!“”"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~—～’]+'
+puncs = r"[!\"\"\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~—~]+"
 stopwords = ['at', 'based', 'in', 'of', 'for', 'on', 'and', 'to', 'an', 'using', 'with',
             'the', 'by', 'we', 'be', 'is', 'are', 'can']
 stopwords_extend = ['university', 'univ', 'china', 'department', 'dept', 'laboratory', 'lab',
@@ -35,7 +35,7 @@ def read_pubinfo(mode):
     if mode == 'train':
         pubs = load_json(join(base, "train", "train_pub.json"))
     elif mode == 'valid':
-        pubs = load_json(join(base, "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\mio_valid_pub.json"))
+        pubs = load_json(join(base, "sna-valid", "sna_valid_pub.json"))
     elif mode == 'test':
         pubs = load_json(join(base, 'sna-test', 'sna_test_pub.json'))
     else:
@@ -53,7 +53,7 @@ def read_raw_pubs(mode):
     if mode == 'train':
         raw_pubs = load_json(join(base, "train", "train_author.json"))
     elif mode == 'valid':
-        raw_pubs = load_json(join(base, "sna-valid", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\bond_train_test_split\test\mio_valid_raw.json"))
+        raw_pubs = load_json(join(base, "sna-valid", "sna_valid_raw.json"))
     elif mode == 'test':
         raw_pubs = load_json(join(base, "sna-test", "sna_test_raw.json"))
     else:
@@ -65,7 +65,6 @@ def read_raw_pubs(mode):
 def dump_name_pubs():
     """
     Split publications informations by {name} and dump files as {name}.json
-
     """
     for mode in ['train', 'valid', 'test']:
         raw_pubs = read_raw_pubs(mode)
@@ -73,20 +72,29 @@ def dump_name_pubs():
         file_path = join(args.save_path, 'names_pub', mode)
         if not os.path.exists(file_path):
             check_mkdir(file_path)
+        
         for name in tqdm(raw_pubs):
             name_pubs_raw = {}
             if mode != "train":
                 for i, pid in enumerate(raw_pubs[name]):
-                    name_pubs_raw[pid] = pub_info[pid]
+                    if pid in pub_info:
+                        name_pubs_raw[pid] = pub_info[pid]
             else:
                 pids = []
                 for aid in raw_pubs[name]:
-                    pids.extend(raw_pubs[name][aid])
+                    paper_ids = raw_pubs[name][aid]
+                    
+                    # Gestisci diversi formati
+                    if isinstance(paper_ids, list):
+                        pids.extend(paper_ids)
+                    elif isinstance(paper_ids, (int, str)):
+                        pids.append(str(paper_ids))
+                
                 for pid in pids:
-                    name_pubs_raw[pid] = pub_info[pid]
+                    if pid in pub_info:
+                        name_pubs_raw[pid] = pub_info[pid]
 
             dump_json(name_pubs_raw, join(file_path, name+'.json'), indent=4)
-
 
 
 def unify_name_order(name):
@@ -110,22 +118,29 @@ def unify_name_order(name):
 def dump_features_relations_to_file():
     """
     Generate paper features and relations by raw publication data and dump to files.
-    Paper features consist of title, org, keywords. Paper relations consist of author_name, org, venue.
+    Paper features consist of title, org, keywords. 
+    Paper relations consist of author_name, org, venue, CITATIONS.
     """
-    r = '[!“”"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~—～’]+'
-
+    r = '[!"""#$%&\'()*+,-./:;<=>?@\[\\\\]^_`{|}~—～]+'
+    
     for mode in ['train', 'valid', 'test']:
         raw_pubs = read_raw_pubs(mode)
+        
+        print(f"\nProcessing {mode} mode...")
+        
         for n, name in tqdm(enumerate(raw_pubs)):
 
             file_path = join(args.save_path, 'relations', mode, name)
             check_mkdir(file_path)
+            
             coa_file = open(join(file_path, 'paper_author.txt'), 'w', encoding='utf-8')
             cov_file = open(join(file_path, 'paper_venue.txt'), 'w', encoding='utf-8')
             cot_file = open(join(file_path, 'paper_title.txt'), 'w', encoding='utf-8')
             coo_file = open(join(file_path, 'paper_org.txt'), 'w', encoding='utf-8')
+            cite_out_file = open(join(file_path, 'paper_cite_out.txt'), 'w', encoding='utf-8')
+            cite_in_file = open(join(file_path, 'paper_cite_in.txt'), 'w', encoding='utf-8')
 
-            authorname_dict = {} # maintain a author-name-dict
+            authorname_dict = {}
             pubs_dict = load_json(join(args.save_path, 'names_pub', mode, name+'.json'))
 
             ori_name = name
@@ -134,7 +149,7 @@ def dump_features_relations_to_file():
             for i, pid in enumerate(pubs_dict):
                 pub = pubs_dict[pid]
 
-                # Save title (relations)
+                # Save title
                 title = pub["title"]
                 pstr = title.strip()
                 pstr = pstr.lower()
@@ -156,7 +171,7 @@ def dump_features_relations_to_file():
                     pstr = re.sub(' +', ' ', pstr)
                 keyword = pstr
 
-                # Save org (relations)
+                # Save org
                 org = ""
                 find_author = False
                 for author in pub["authors"]:
@@ -174,10 +189,10 @@ def dump_features_relations_to_file():
                         authorname = authorname.replace(" ", "")
                     
                     if authorname != name and authorname != name_reverse:
-                        coa_file.write(pid + '\t' + authorname + '\n')  # current name is a name of co-author
+                        coa_file.write(pid + '\t' + authorname + '\n')
                     else:
                         if "org" in author:
-                            org = author["org"]  # current name is a name for disambiguating
+                            org = author["org"]
                             find_author = True
 
                 if not find_author:
@@ -198,7 +213,7 @@ def dump_features_relations_to_file():
                 for word in pstr:
                     coo_file.write(pid + '\t' + word + '\n')
                 
-                # Save venue (relations)
+                # Save venue
                 if pub["venue"]:
                     pstr = pub["venue"].strip()
                     pstr = pstr.lower()
@@ -213,19 +228,81 @@ def dump_features_relations_to_file():
                         cov_file.write(pid + '\t' + word + '\n')
                     if len(pstr) == 0:
                         cov_file.write(pid + '\t' + 'null' + '\n')
+                
+                # Outgoing citations
+                if "outgoing_citations" in pub and pub["outgoing_citations"]:
+                    citations = pub["outgoing_citations"]
+                    
+                    # Gestisci formato: lista di stringhe con ID multipli separati da spazi
+                    all_refs = []
+                    if isinstance(citations, list):
+                        for citation_str in citations:
+                            # Ogni elemento è una stringa con ID separati da spazi
+                            if isinstance(citation_str, str):
+                                all_refs.extend(citation_str.split())
+                            else:
+                                all_refs.append(str(citation_str))
+                    elif isinstance(citations, str):
+                        all_refs = citations.split()
+                    
+                    # Scrivi ogni ID di riferimento
+                    for ref_id in all_refs:
+                        ref_id = ref_id.strip()
+                        if ref_id:
+                            cite_out_file.write(f"{pid}\t{ref_id}\n")
+                
+                # Incoming citations
+                if "incoming_citations" in pub and pub["incoming_citations"]:
+                    citations = pub["incoming_citations"]
+                    
+                    # Gestisci formato: lista di stringhe con ID multipli separati da spazi
+                    all_citing = []
+                    if isinstance(citations, list):
+                        for citation_str in citations:
+                            # Ogni elemento è una stringa con ID separati da spazi
+                            if isinstance(citation_str, str):
+                                all_citing.extend(citation_str.split())
+                            else:
+                                all_citing.append(str(citation_str))
+                    elif isinstance(citations, str):
+                        all_citing = citations.split()
+                    
+                    # Scrivi ogni ID citante
+                    for citing_id in all_citing:
+                        citing_id = citing_id.strip()
+                        if citing_id:
+                            cite_in_file.write(f"{pid}\t{citing_id}\n")
+                # =================================================
 
             coa_file.close()
             cov_file.close()
             cot_file.close()
             coo_file.close()
+            cite_out_file.close()
+            cite_in_file.close()
+            
         print(f'Finish {mode} data extracted.')
-    print(f'All paper features extracted.')
-
+    
+    print(f'\nAll paper features extracted.')
+    
 
 if __name__ == "__main__":
     """
-    some pre-processing
+    Complete preprocessing pipeline
     """
+    print("="*70)
+    print("BOND PREPROCESSING PIPELINE CON CITAZIONI")
+    print("="*70)
+    
+    print("\n[1/3] Dumping name publications...")
     dump_name_pubs()
-    # dump_features_relations_to_file()
-    # build_graph()
+    
+    print("\n[2/3] Extracting features and relations (including citations)...")
+    dump_features_relations_to_file()
+    
+    print("\n[3/3] Building graphs...")
+    build_graph()
+    
+    print("\n" + "="*70)
+    print("✓ PREPROCESSING COMPLETATO!")
+    print("="*70)
