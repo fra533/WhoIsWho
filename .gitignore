@@ -8,3 +8,5 @@ hyperopt_results*
 bond_train_test_split*
 bond_unified_refined_analysis*
 tbr*
+synt_dataset*
+train_test_split*
