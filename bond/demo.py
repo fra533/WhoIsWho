@@ -50,10 +50,10 @@ def pipeline(model):
     else:
         print("\n🔄 Running preprocessing...")
         print("\n[1/3] Loading and dumping name publications...")
-        dump_name_pubs()
+        #dump_name_pubs()
         
         print("\n[2/3] Creating features and relations...")
-        dump_features_relations_to_file()
+        #dump_features_relations_to_file()
         
         print("\n[3/3] Building graph...")
         build_graph()
