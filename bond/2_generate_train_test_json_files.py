@@ -13,16 +13,18 @@ import traceback
 BASE_PATH = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond"
 
 # Input files
-SPLIT_DIR = join(BASE_PATH, "bond_train_test_split")
-TRAIN_AUTHORS_FILE = join(SPLIT_DIR, "train_authors.txt")
-TEST_AUTHORS_FILE = join(SPLIT_DIR, "test_authors.txt")
+SPLIT_DIR = join(BASE_PATH, r"dataset\data\B3\bond_train_test_split_b3")
+TRAIN_AUTHORS_FILE = join(SPLIT_DIR, "train_authors_v2.txt")
+TEST_AUTHORS_FILE = join(SPLIT_DIR, "test_authors_v2.txt")
 
 # File JSON originali BOND
-ORIGINAL_PUB_JSON = join(BASE_PATH, "dataset", "data", "src", "sna-valid", "converted_metadata_pub.json")
-ORIGINAL_GT_JSON = join(BASE_PATH, "dataset", "data", "src", "sna-valid", "sna_valid_ground_truth.json")
+ORIGINAL_PUB_JSON = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BondforOC\results\OC_results_with_citations\converted_metadata_withcit.json"
+#join(BASE_PATH, "dataset", "data", "src", "sna-valid", "sna_valid_pub.json")
+ORIGINAL_GT_JSON = r"C:\Users\franc\Downloads\sna_valid_ground_truth.json"
+#join(BASE_PATH, "dataset", "data", "src", "sna-valid", "sna_valid_ground_truth.json")
 
 # Output directory
-OUTPUT_DIR = join(BASE_PATH, "bond_train_test_split")
+OUTPUT_DIR = join(BASE_PATH, "bond_train_test_split_b3")
 # ================================================================
 
 

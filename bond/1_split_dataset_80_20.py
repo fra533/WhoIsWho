@@ -1,6 +1,8 @@
 """
-Split dataset raffinato in train (80%) e test (20%)
-Usa il CSV già estratto con features pulite
+Split dataset 80/20 CONSAPEVOLE
+Basato su features estratte da TUTTI gli autori (train + test primo split)
+
+PREREQUISITO: Aver eseguito debug_graphs_and_expand_FULL.py
 """
 
 import pandas as pd
@@ -12,11 +14,11 @@ import os
 # ======================== CONFIGURAZIONE ========================
 BASE_PATH = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond"
 
-# Input: CSV con features già estratte
-INPUT_CSV = join(BASE_PATH, "bond_unified_refined_analysis", "refined_features_results.csv")
+# Input: CSV con features estratte per TUTTI gli autori
+INPUT_CSV = join(BASE_PATH, "bond_full_features_raw", "full_features_raw.csv")
 
 # Output
-OUTPUT_DIR = join(BASE_PATH, "bond_train_test_split")
+OUTPUT_DIR = join(BASE_PATH, "bond_train_test_split_b3")
 
 TRAIN_RATIO = 0.8
 TEST_RATIO = 0.2
@@ -25,19 +27,29 @@ RANDOM_SEED = 42
 
 
 def load_dataset():
-    """Carica dataset raffinato"""
+    """Carica dataset con features"""
     print("="*80)
-    print("STRATIFIED TRAIN/TEST SPLIT (80/20)")
+    print("STRATIFIED TRAIN/TEST SPLIT (80/20) - V2 CONSAPEVOLE")
+    print("Basato su features estratte post-BOND")
     print("="*80)
     print(f"\n[1/5] Caricamento dataset...")
     
     if not exists(INPUT_CSV):
         print(f"ERRORE: File non trovato: {INPUT_CSV}")
-        print(f"\nEsegui prima unified_refined_analysis.py per generare il CSV")
+        print(f"\nDevi prima eseguire:")
+        print(f"  python debug_graphs_and_expand_FULL.py")
+        print(f"\nQuesto script analizza TUTTI gli autori (train + test primo split)")
         return None
     
     df = pd.read_csv(INPUT_CSV, index_col=0)
     print(f"      Dataset: {len(df)} autori, {len(df.columns)} colonne")
+    
+    # Verifica colonne essenziali
+    if 'f1' not in df.columns:
+        print(f"      ❌ ERRORE: Colonna 'f1' mancante!")
+        return None
+    
+    print(f"      ✓ F1 score range: [{df['f1'].min():.4f}, {df['f1'].max():.4f}]")
     
     return df
 
@@ -46,34 +58,51 @@ def create_stratification_bins(df):
     """Crea bin per stratificazione su più dimensioni"""
     print(f"\n[2/5] Creazione bin per stratificazione...")
     
-    # STRATEGIA SEMPLIFICATA: solo F1 e cluster
-    # Evita troppi bin per dataset piccolo (79 autori)
+    # 1. Bin F1 score (performance) - adattivo al dataset size
+    n_bins = min(4, max(2, len(df) // 20))  # 2-4 bin a seconda del size
     
-    # 1. Bin F1 score (performance) - solo 3 bin invece di 5
-    df['f1_bin'] = pd.qcut(df['f1'], q=3, labels=['low', 'medium', 'high'], duplicates='drop')
+    try:
+        df['f1_bin'] = pd.qcut(df['f1'], q=n_bins, labels=False, duplicates='drop')
+        print(f"      ✓ F1 bins: {df['f1_bin'].nunique()} livelli (qcut)")
+    except ValueError:
+        df['f1_bin'] = pd.cut(df['f1'], bins=n_bins, labels=False)
+        print(f"      ⚠️  F1 bins: {df['f1_bin'].nunique()} livelli (cut - fallback)")
     
-    # 2. Usa cluster già presente (3 cluster nel dataset)
-    # df['cluster'] già nel dataset
+    # 2. Bin su feature più correlata con F1 (se disponibile)
+    feature_cols = [c for c in df.columns if c not in ['f1', 'precision', 'recall', 'cluster']]
     
-    # 3. Crea stratification key combinata (max 3x3 = 9 classi)
-    df['stratify_key'] = (
-        df['f1_bin'].astype(str) + '_' + 
-        df['cluster'].astype(str)
-    )
+    if len(feature_cols) > 0:
+        # Trova feature più correlata
+        correlations = df[feature_cols].corrwith(df['f1']).abs()
+        top_feature = correlations.idxmax()
+        
+        print(f"      Top feature correlata: {top_feature} (r={correlations[top_feature]:.3f})")
+        
+        # Crea bin su questa feature
+        try:
+            df['feature_bin'] = pd.qcut(df[top_feature], q=min(3, len(df)//15), labels=False, duplicates='drop')
+            print(f"      ✓ Feature bins: {df['feature_bin'].nunique()} livelli")
+        except ValueError:
+            df['feature_bin'] = pd.cut(df[top_feature], bins=min(3, len(df)//15), labels=False)
+            print(f"      ⚠️  Feature bins: {df['feature_bin'].nunique()} livelli (cut)")
+        
+        # Stratification key combinata
+        df['stratify_key'] = (
+            df['f1_bin'].astype(str) + '_' + 
+            df['feature_bin'].astype(str)
+        )
+    else:
+        # Solo F1
+        df['stratify_key'] = df['f1_bin'].astype(str)
     
-    print(f"      Chiavi di stratificazione univoche: {df['stratify_key'].nunique()}")
+    print(f"      ✓ Chiavi di stratificazione univoche: {df['stratify_key'].nunique()}")
     
+    # Mostra distribuzione F1 bins
     print(f"\n      Distribuzione F1 bins:")
-    for bin_name, count in df['f1_bin'].value_counts().sort_index().items():
-        print(f"        {bin_name:12s}: {count:3d} autori")
-    
-    print(f"\n      Distribuzione cluster:")
-    for cluster, count in df['cluster'].value_counts().sort_index().items():
-        print(f"        Cluster {cluster}:   {count:3d} autori")
-    
-    print(f"\n      Distribuzione chiavi combinate:")
-    for key, count in df['stratify_key'].value_counts().sort_values(ascending=False).head(9).items():
-        print(f"        {key:20s}: {count:3d} autori")
+    for bin_name in sorted(df['f1_bin'].unique()):
+        count = (df['f1_bin'] == bin_name).sum()
+        f1_range = df[df['f1_bin'] == bin_name]['f1']
+        print(f"        Bin {bin_name}: {count:3d} autori (F1: {f1_range.min():.3f}-{f1_range.max():.3f})")
     
     return df
 
@@ -87,8 +116,8 @@ def perform_split(df):
     rare_keys = stratify_counts[stratify_counts == 1].index
     
     if len(rare_keys) > 0:
-        print(f"      ⚠ {len(rare_keys)} chiavi con 1 solo sample")
-        print(f"      Soluzione: assegnazione casuale per questi sample")
+        print(f"      ⚠️  {len(rare_keys)} chiavi con 1 solo sample")
+        print(f"      Soluzione: split casuale per questi sample")
         
         # Separa rare da stratifiable
         df_rare = df[df['stratify_key'].isin(rare_keys)]
@@ -103,15 +132,19 @@ def perform_split(df):
         )
         
         # Split casuale su rare
-        train_rare, test_rare = train_test_split(
-            df_rare,
-            test_size=TEST_RATIO,
-            random_state=RANDOM_SEED
-        )
-        
-        # Combina
-        train_df = pd.concat([train_strat, train_rare])
-        test_df = pd.concat([test_strat, test_rare])
+        if len(df_rare) > 0:
+            train_rare, test_rare = train_test_split(
+                df_rare,
+                test_size=TEST_RATIO,
+                random_state=RANDOM_SEED
+            )
+            
+            # Combina
+            train_df = pd.concat([train_strat, train_rare])
+            test_df = pd.concat([test_strat, test_rare])
+        else:
+            train_df = train_strat
+            test_df = test_strat
     else:
         # Split stratificato standard
         train_df, test_df = train_test_split(
@@ -122,12 +155,12 @@ def perform_split(df):
         )
     
     # Rimuovi colonne temporanee
-    cols_to_drop = ['f1_bin', 'papers_bin', 'stratify_key']
+    cols_to_drop = ['f1_bin', 'feature_bin', 'stratify_key']
     train_df = train_df.drop(columns=cols_to_drop, errors='ignore')
     test_df = test_df.drop(columns=cols_to_drop, errors='ignore')
     
-    print(f"      Train: {len(train_df)} autori ({len(train_df)/len(df)*100:.1f}%)")
-    print(f"      Test:  {len(test_df)} autori ({len(test_df)/len(df)*100:.1f}%)")
+    print(f"      ✓ Train: {len(train_df)} autori ({len(train_df)/len(df)*100:.1f}%)")
+    print(f"      ✓ Test:  {len(test_df)} autori ({len(test_df)/len(df)*100:.1f}%)")
     
     return train_df, test_df
 
@@ -138,40 +171,31 @@ def validate_split(train_df, test_df, original_df):
     
     from scipy.stats import ks_2samp
     
-    print(f"\n      Confronto distribuzioni:")
-    print(f"      {'Metrica':25s} Original    Train       Test        p-value")
-    print(f"      {'-'*80}")
+    print(f"\n      Confronto distribuzioni (KS-test):")
+    print(f"      {'Metrica':30s} Train      Test       p-value  Status")
+    print(f"      {'-'*75}")
     
     # F1 score
     ks_stat, ks_pval = ks_2samp(train_df['f1'], test_df['f1'])
-    print(f"      {'F1 score':25s} {original_df['f1'].mean():8.4f}    {train_df['f1'].mean():8.4f}    {test_df['f1'].mean():8.4f}    {ks_pval:.4f} {'✓' if ks_pval > 0.05 else '⚠'}")
+    status = '✓ OK' if ks_pval > 0.05 else '⚠️ DIFF'
+    print(f"      {'F1 score':30s} {train_df['f1'].mean():8.4f}   {test_df['f1'].mean():8.4f}   {ks_pval:.4f}   {status}")
     
-    # Num papers
-    ks_stat, ks_pval = ks_2samp(train_df['num_papers'], test_df['num_papers'])
-    print(f"      {'num_papers':25s} {original_df['num_papers'].mean():8.1f}    {train_df['num_papers'].mean():8.1f}    {test_df['num_papers'].mean():8.1f}    {ks_pval:.4f} {'✓' if ks_pval > 0.05 else '⚠'}")
+    # Top features (se disponibili)
+    feature_cols = [c for c in train_df.columns if c not in ['f1', 'precision', 'recall']]
     
-    # Graph clustering coef (feature più correlata)
-    if 'graph_clustering_coef' in train_df.columns:
-        ks_stat, ks_pval = ks_2samp(train_df['graph_clustering_coef'], test_df['graph_clustering_coef'])
-        print(f"      {'graph_clustering_coef':25s} {original_df['graph_clustering_coef'].mean():8.4f}    {train_df['graph_clustering_coef'].mean():8.4f}    {test_df['graph_clustering_coef'].mean():8.4f}    {ks_pval:.4f} {'✓' if ks_pval > 0.05 else '⚠'}")
-    
-    # Emb effective dim
-    if 'emb_effective_dim' in train_df.columns:
-        ks_stat, ks_pval = ks_2samp(train_df['emb_effective_dim'], test_df['emb_effective_dim'])
-        print(f"      {'emb_effective_dim':25s} {original_df['emb_effective_dim'].mean():8.4f}    {train_df['emb_effective_dim'].mean():8.4f}    {test_df['emb_effective_dim'].mean():8.4f}    {ks_pval:.4f} {'✓' if ks_pval > 0.05 else '⚠'}")
-    
-    print(f"\n      Distribuzione Cluster:")
-    print(f"      Cluster  Original  Train  Test")
-    print(f"      {'-'*40}")
-    for cluster in sorted(original_df['cluster'].unique()):
-        orig_pct = (original_df['cluster'] == cluster).sum() / len(original_df) * 100
-        train_pct = (train_df['cluster'] == cluster).sum() / len(train_df) * 100
-        test_pct = (test_df['cluster'] == cluster).sum() / len(test_df) * 100
-        print(f"      {cluster:7d}  {orig_pct:7.1f}%  {train_pct:6.1f}%  {test_pct:5.1f}%")
+    if len(feature_cols) > 0:
+        # Top 3 features correlate con F1
+        correlations = train_df[feature_cols].corrwith(train_df['f1']).abs().sort_values(ascending=False)
+        
+        for feat in correlations.head(3).index:
+            ks_stat, ks_pval = ks_2samp(train_df[feat], test_df[feat])
+            status = '✓ OK' if ks_pval > 0.05 else '⚠️ DIFF'
+            feat_name = feat[:28]  # Truncate se troppo lungo
+            print(f"      {feat_name:30s} {train_df[feat].mean():8.4f}   {test_df[feat].mean():8.4f}   {ks_pval:.4f}   {status}")
     
     print(f"\n      Interpretazione KS-test:")
-    print(f"        p > 0.05: Distribuzioni simili (BUONO) ✓")
-    print(f"        p < 0.05: Distribuzioni diverse (ATTENZIONE) ⚠")
+    print(f"        ✓ OK:   Distribuzioni simili (p > 0.05) - BUONO")
+    print(f"        ⚠️ DIFF: Distribuzioni diverse (p < 0.05) - ATTENZIONE")
 
 
 def save_splits(train_df, test_df):
@@ -181,19 +205,19 @@ def save_splits(train_df, test_df):
     if not exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
     
-    # CSV principali
-    train_file = join(OUTPUT_DIR, 'train_set.csv')
-    test_file = join(OUTPUT_DIR, 'test_set.csv')
+    # CSV completi (con features)
+    train_file = join(OUTPUT_DIR, 'train_set_v2.csv')
+    test_file = join(OUTPUT_DIR, 'test_set_v2.csv')
     
     train_df.to_csv(train_file)
     test_df.to_csv(test_file)
     
-    print(f"      ✓ Train CSV: train_set.csv")
-    print(f"      ✓ Test CSV:  test_set.csv")
+    print(f"      ✓ train_set_v2.csv ({len(train_df)} autori)")
+    print(f"      ✓ test_set_v2.csv ({len(test_df)} autori)")
     
-    # Liste nomi autori
-    train_authors_file = join(OUTPUT_DIR, 'train_authors.txt')
-    test_authors_file = join(OUTPUT_DIR, 'test_authors.txt')
+    # Liste nomi autori (per generare JSON dopo)
+    train_authors_file = join(OUTPUT_DIR, 'train_authors_v2.txt')
+    test_authors_file = join(OUTPUT_DIR, 'test_authors_v2.txt')
     
     with open(train_authors_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(train_df.index.tolist()))
@@ -201,23 +225,24 @@ def save_splits(train_df, test_df):
     with open(test_authors_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(test_df.index.tolist()))
     
-    print(f"      ✓ Train authors: train_authors.txt")
-    print(f"      ✓ Test authors:  test_authors.txt")
+    print(f"      ✓ train_authors_v2.txt")
+    print(f"      ✓ test_authors_v2.txt")
     
     # Report dettagliato
     report = generate_report(train_df, test_df)
-    report_file = join(OUTPUT_DIR, 'split_report.txt')
+    report_file = join(OUTPUT_DIR, 'split_report_v2.txt')
     with open(report_file, 'w', encoding='utf-8') as f:
         f.write(report)
     
-    print(f"      ✓ Report: split_report.txt")
+    print(f"      ✓ split_report_v2.txt")
 
 
 def generate_report(train_df, test_df):
     """Genera report completo"""
     lines = []
     lines.append("="*80)
-    lines.append("TRAIN/TEST SPLIT REPORT")
+    lines.append("TRAIN/TEST SPLIT REPORT V2 - CONSAPEVOLE")
+    lines.append("Split stratificato basato su features post-BOND")
     lines.append("="*80)
     lines.append("")
     lines.append("CONFIGURAZIONE:")
@@ -243,55 +268,46 @@ def generate_report(train_df, test_df):
         lines.append(f"{stat:20s} {train_val:8.4f}   {test_val:8.4f}   {delta:8.4f}   {delta_pct:6.2f}%")
     
     lines.append("")
-    lines.append("DISTRIBUZIONE CLUSTER:")
-    lines.append("-"*80)
-    lines.append(f"Cluster    Train (n)  Train (%)   Test (n)   Test (%)    Delta")
-    lines.append("-"*80)
-    for cluster in sorted(train_df['cluster'].unique()):
-        train_n = (train_df['cluster'] == cluster).sum()
-        train_pct = train_n / len(train_df) * 100
-        test_n = (test_df['cluster'] == cluster).sum()
-        test_pct = test_n / len(test_df) * 100
-        delta = abs(train_pct - test_pct)
-        lines.append(f"{cluster:7d}    {train_n:8d}   {train_pct:7.2f}%   {test_n:8d}   {test_pct:7.2f}%   {delta:6.2f}%")
+    lines.append("="*80)
+    lines.append("PROSSIMI PASSI")
+    lines.append("="*80)
+    lines.append("")
+    lines.append("1. Genera file JSON per BOND:")
+    lines.append("   Modifica 2_generate_train_test_json_files.py:")
+    lines.append(f"     TRAIN_AUTHORS_FILE = '{join(OUTPUT_DIR, 'train_authors_v2.txt')}'")
+    lines.append(f"     TEST_AUTHORS_FILE = '{join(OUTPUT_DIR, 'test_authors_v2.txt')}'")
+    lines.append("")
+    lines.append("2. Esegui script:")
+    lines.append("   python 2_generate_train_test_json_files.py")
+    lines.append("")
+    lines.append("3. Copia nuovo split in directory BOND:")
+    lines.append("   xcopy /E /Y bond_train_test_split_v2\\train\\* dataset\\data\\src\\train\\")
+    lines.append("   xcopy /E /Y bond_train_test_split_v2\\test\\* dataset\\data\\src\\sna-valid\\")
+    lines.append("")
+    lines.append("4. Re-preprocessing:")
+    lines.append("   python train_w2v.py")
+    lines.append("   python -m dataset.preprocess_SND")
+    lines.append("")
+    lines.append("5. Re-training:")
+    lines.append("   python demo.py --mode train")
+    lines.append("   python demo.py --mode valid")
+    lines.append("")
+    lines.append("6. Confronta performance con split casuale iniziale!")
+    lines.append("="*80)
     
     lines.append("")
-    lines.append("="*80)
-    lines.append("COME USARE QUESTI DATASET")
-    lines.append("="*80)
-    lines.append("")
-    lines.append("TRAIN SET (80% - per sviluppo modello):")
-    lines.append("  1. Hyperparameter tuning con cross-validation")
-    lines.append("  2. Feature engineering e selezione")
-    lines.append("  3. Training modello finale")
-    lines.append("  4. Puoi guardarlo quanto vuoi durante sviluppo")
-    lines.append("")
-    lines.append("TEST SET (20% - SACRED HOLDOUT):")
-    lines.append("  1. NON guardare durante tuning")
-    lines.append("  2. NON usare per prendere decisioni sul modello")
-    lines.append("  3. Usare SOLO UNA VOLTA per valutazione finale")
-    lines.append("  4. Simula performance su dati mai visti")
-    lines.append("")
-    lines.append("REGOLE D'ORO:")
-    lines.append("  ✓ Nessun data leakage da test a train")
-    lines.append("  ✓ Test set = ultima valutazione prima deployment")
-    lines.append("  ✓ Se test ≠ train performance: overfitting o distribuzione diversa")
-    lines.append("")
-    lines.append("="*80)
     lines.append("TRAIN AUTHORS:")
     lines.append("-"*80)
     for i, author in enumerate(sorted(train_df.index), 1):
         f1 = train_df.loc[author, 'f1']
-        cluster = int(train_df.loc[author, 'cluster'])
-        lines.append(f"  {i:2d}. {author:30s} F1={f1:.4f} Cluster={cluster}")
+        lines.append(f"  {i:3d}. {author:40s} F1={f1:.4f}")
     
     lines.append("")
     lines.append("TEST AUTHORS:")
     lines.append("-"*80)
     for i, author in enumerate(sorted(test_df.index), 1):
         f1 = test_df.loc[author, 'f1']
-        cluster = int(test_df.loc[author, 'cluster'])
-        lines.append(f"  {i:2d}. {author:30s} F1={f1:.4f} Cluster={cluster}")
+        lines.append(f"  {i:3d}. {author:40s} F1={f1:.4f}")
     
     lines.append("")
     lines.append("="*80)
@@ -320,16 +336,26 @@ def main():
     save_splits(train_df, test_df)
     
     print("\n" + "="*80)
-    print("✓ SPLIT COMPLETATO CON SUCCESSO!")
+    print("✅ SPLIT CONSAPEVOLE COMPLETATO!")
     print("="*80)
-    print(f"\nRisultati in: {OUTPUT_DIR}")
+    print(f"\nOutput directory: {OUTPUT_DIR}")
     print(f"\nFile generati:")
-    print(f"  • train_set.csv      - {len(train_df)} autori per hyperparameter tuning")
-    print(f"  • test_set.csv       - {len(test_df)} autori per valutazione finale")
-    print(f"  • train_authors.txt  - lista nomi train")
-    print(f"  • test_authors.txt   - lista nomi test")
-    print(f"  • split_report.txt   - report dettagliato")
-    print(f"\n{'='*80}\n")
+    print(f"  • train_set_v2.csv         - {len(train_df)} autori + features")
+    print(f"  • test_set_v2.csv          - {len(test_df)} autori + features")
+    print(f"  • train_authors_v2.txt     - lista nomi train")
+    print(f"  • test_authors_v2.txt      - lista nomi test")
+    print(f"  • split_report_v2.txt      - report dettagliato")
+    print(f"\n{'='*80}")
+    print("💡 DIFFERENZA CON SPLIT CASUALE:")
+    print("="*80)
+    print("  Questo split è STRATIFICATO su:")
+    print("    1. Performance (F1 score)")
+    print("    2. Feature tecnica più correlata")
+    print("")
+    print("  Risultato: Train e Test hanno distribuzioni simili")
+    print("  → Valutazione più affidabile")
+    print("  → Riduce rischio di overfitting")
+    print("="*80 + "\n")
 
 
 if __name__ == "__main__":
