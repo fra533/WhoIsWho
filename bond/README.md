@@ -1,12 +1,12 @@
 ```
-1_generate_train_test_split_correct.py
+1_generate_train_test_split_correct.py      #Creazione split quasi casuale in 80/20 con formato Bond
 --> Run Bond
-2_debug_graphs_and_expand.py
-3_split_dataset_80_20.py
-4_generate_train_test_json_files.py
+2_debug_graphs_and_expand.py          #Estrazione feature per split consapevole del dataset
+3_split_dataset_80_20.py              #Creazione liste con split 80/20 basandosi sulle feature trovate al passo prec
+4_generate_train_test_json_files.py   #Conversione al formato Bond 
 Ottimizzazione:
 
-5_bond_optuna_optimization.py
+5_bond_optuna_optimization.py # Ottimizazione modello Bond 
 ```
 
 # BOND
