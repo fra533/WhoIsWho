@@ -1,3 +1,4 @@
+```
 1_generate_train_test_split_correct.py
 --> Run Bond
 2_debug_graphs_and_expand.py
@@ -6,6 +7,7 @@
 Ottimizzazione:
 
 5_bond_optuna_optimization.py
+```
 
 # BOND
 This repository contains the source code of paper "BOND: Bootstrapping From-Scratch Name Disambiguation with Multi-task Promoting".
