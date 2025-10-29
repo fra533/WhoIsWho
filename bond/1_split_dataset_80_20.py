@@ -1,6 +1,7 @@
 """
-Split dataset raffinato in train (80%) e test (20%)
-Usa il CSV già estratto con features pulite
+Split dataset in train (80%) e test (20%)
+Usa il CSV già estratto con features pulite generate da debug_graphs_and_expand.py 
+Modificare INPUT_CSV 
 """
 
 import pandas as pd
@@ -25,7 +26,7 @@ RANDOM_SEED = 42
 
 
 def load_dataset():
-    """Carica dataset raffinato"""
+
     print("="*80)
     print("STRATIFIED TRAIN/TEST SPLIT (80/20)")
     print("="*80)
@@ -264,18 +265,12 @@ def generate_report(train_df, test_df):
     lines.append("  1. Hyperparameter tuning con cross-validation")
     lines.append("  2. Feature engineering e selezione")
     lines.append("  3. Training modello finale")
-    lines.append("  4. Puoi guardarlo quanto vuoi durante sviluppo")
     lines.append("")
     lines.append("TEST SET (20% - SACRED HOLDOUT):")
     lines.append("  1. NON guardare durante tuning")
     lines.append("  2. NON usare per prendere decisioni sul modello")
     lines.append("  3. Usare SOLO UNA VOLTA per valutazione finale")
     lines.append("  4. Simula performance su dati mai visti")
-    lines.append("")
-    lines.append("REGOLE D'ORO:")
-    lines.append("  ✓ Nessun data leakage da test a train")
-    lines.append("  ✓ Test set = ultima valutazione prima deployment")
-    lines.append("  ✓ Se test ≠ train performance: overfitting o distribuzione diversa")
     lines.append("")
     lines.append("="*80)
     lines.append("TRAIN AUTHORS:")
