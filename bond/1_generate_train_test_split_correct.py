@@ -1,7 +1,5 @@
 """
-TRAIN/TEST SPLIT ROBUSTO PER BOND DATASET
-
-Versione migliorata con validazione integrata per prevenire paper mancanti.
+TRAIN/TEST SPLIT PER BOND DATASET
 
 OUTPUT STRUCTURE:
 train/
@@ -149,8 +147,7 @@ def convert_simple_to_bond_format(simple_gt, all_pubs):
 
 def clean_ground_truth(gt, available_pubs):
     """
-    NUOVA FUNZIONE: Pulisce ground truth rimuovendo paper mancanti.
-    
+    Pulisce ground truth rimuovendo paper mancanti.
     Questa funzione garantisce che OGNI paper nella GT esista in available_pubs.
     """
     print(f"\n[2/7] Pulizia e validazione ground truth...")
@@ -288,8 +285,7 @@ def load_ground_truth(original_gt_path, simple_raw_path, all_pubs):
 
 def validate_consistency(pub, gt, name):
     """
-    NUOVA FUNZIONE: Validazione finale di consistenza.
-    
+    Validazione finale di consistenza.
     Verifica che OGNI paper nella GT esista in pub.
     """
     print(f"\n[Validazione] Verifica consistenza {name}...")
@@ -456,7 +452,7 @@ def save_all_files(train_pub, train_author, test_pub, test_raw, test_gt):
 
 
 def final_validation(train_pub, train_author, test_pub, test_raw, test_gt):
-    """NUOVA FUNZIONE: Validazione finale completa"""
+    """Validazione finale completa"""
     print(f"\n[7/7] Validazione finale...")
     
     all_valid = True
@@ -492,7 +488,7 @@ def final_validation(train_pub, train_author, test_pub, test_raw, test_gt):
 def main():
     """Entry point"""
     print("=" * 80)
-    print("TRAIN/TEST SPLIT ROBUSTO - BOND DATASET")
+    print("TRAIN/TEST SPLIT - BOND DATASET")
     print("Con validazione automatica paper mancanti")
     print("=" * 80)
     

@@ -1,6 +1,8 @@
 """
 Feature extraction da FILE RAW DEI GRAFI
-Legge direttamente: adj_attr.txt, feats_p.npy, p_label.npy, rel_cp.txt
+Legge adj_attr.txt, feats_p.npy, p_label.npy, rel_cp.txt  dataset/graph
+In input prende le F1 calcolate per il train e il test calcolato su un dataset splittato casualmente
+e gli embeddings. 
 """
 
 import json

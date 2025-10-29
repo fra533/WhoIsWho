@@ -2,7 +2,7 @@
 Split dataset 80/20 CONSAPEVOLE
 Basato su features estratte da TUTTI gli autori (train + test primo split)
 
-PREREQUISITO: Aver eseguito debug_graphs_and_expand_FULL.py
+PREREQUISITO: Aver eseguito debug_graphs_and_expand.py
 """
 
 import pandas as pd
@@ -267,33 +267,6 @@ def generate_report(train_df, test_df):
         delta_pct = (delta / train_val * 100) if train_val != 0 else 0
         lines.append(f"{stat:20s} {train_val:8.4f}   {test_val:8.4f}   {delta:8.4f}   {delta_pct:6.2f}%")
     
-    lines.append("")
-    lines.append("="*80)
-    lines.append("PROSSIMI PASSI")
-    lines.append("="*80)
-    lines.append("")
-    lines.append("1. Genera file JSON per BOND:")
-    lines.append("   Modifica 2_generate_train_test_json_files.py:")
-    lines.append(f"     TRAIN_AUTHORS_FILE = '{join(OUTPUT_DIR, 'train_authors_v2.txt')}'")
-    lines.append(f"     TEST_AUTHORS_FILE = '{join(OUTPUT_DIR, 'test_authors_v2.txt')}'")
-    lines.append("")
-    lines.append("2. Esegui script:")
-    lines.append("   python 2_generate_train_test_json_files.py")
-    lines.append("")
-    lines.append("3. Copia nuovo split in directory BOND:")
-    lines.append("   xcopy /E /Y bond_train_test_split_v2\\train\\* dataset\\data\\src\\train\\")
-    lines.append("   xcopy /E /Y bond_train_test_split_v2\\test\\* dataset\\data\\src\\sna-valid\\")
-    lines.append("")
-    lines.append("4. Re-preprocessing:")
-    lines.append("   python train_w2v.py")
-    lines.append("   python -m dataset.preprocess_SND")
-    lines.append("")
-    lines.append("5. Re-training:")
-    lines.append("   python demo.py --mode train")
-    lines.append("   python demo.py --mode valid")
-    lines.append("")
-    lines.append("6. Confronta performance con split casuale iniziale!")
-    lines.append("="*80)
     
     lines.append("")
     lines.append("TRAIN AUTHORS:")
@@ -346,15 +319,9 @@ def main():
     print(f"  • test_authors_v2.txt      - lista nomi test")
     print(f"  • split_report_v2.txt      - report dettagliato")
     print(f"\n{'='*80}")
-    print("💡 DIFFERENZA CON SPLIT CASUALE:")
-    print("="*80)
     print("  Questo split è STRATIFICATO su:")
     print("    1. Performance (F1 score)")
     print("    2. Feature tecnica più correlata")
-    print("")
-    print("  Risultato: Train e Test hanno distribuzioni simili")
-    print("  → Valutazione più affidabile")
-    print("  → Riduce rischio di overfitting")
     print("="*80 + "\n")
 
 
