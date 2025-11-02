@@ -27,12 +27,13 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # CITAZIONI - Range da esplorare
 # Questi parametri sono IMPORTANTI per sfruttare le citazioni!
+
 CITATION_CONFIG = {
-    'use_citations': True,  # Sempre True
-    'cite_out_weight': (0.0, 2.0),  # Peso citazioni outgoing
-    'cite_in_weight': (0.0, 2.0),   # Peso citazioni incoming
-    'cite_out_th': (0.0, 0.5),      # Threshold citazioni out
-    'cite_in_th': (0.0, 0.5)        # Threshold citazioni in
+    'use_citations': True,
+    'cite_out_weight': (0.5, 1.5),  # ← Range più stretto, centrato su 1.0
+    'cite_in_weight': (0.5, 1.5),   # ← Evita lo zero!
+    'cite_out_th': (0.0, 0.2),      # ← Soglie più basse
+    'cite_in_th': (0.0, 0.2)        # ← Soglie più basse
 }
 # ================================================================
 
@@ -316,7 +317,7 @@ def objective(trial):
         '--th_v', str(params['th_v_0']), str(params['th_v_1']),
         
         # ⭐ CITAZIONI ⭐
-        '--use_citations', str(params['use_citations']),
+        #'--use_citations', str(params['use_citations']),
         '--cite_out_weight', str(params['cite_out_weight']),
         '--cite_in_weight', str(params['cite_in_weight']),
         '--cite_out_th', str(params['cite_out_th']),
@@ -343,6 +344,8 @@ def objective(trial):
             print(f"  WARNING: BOND exited with code {result.returncode}")
             with open(trial_dir / "error.txt", 'w') as f:
                 f.write(result.stderr)
+
+                
         
         # Predizioni
         predictions_file = BASE_PATH / "out" / "res.json"
@@ -449,7 +452,7 @@ def run_bond_validation(params):
             '--th_v', str(params['th_v_0']), str(params['th_v_1']),
             '--epochs', str(params.get('epochs', 50)),
             # ⭐ CITAZIONI ⭐
-            '--use_citations', str(params.get('use_citations', True)),
+            #'--use_citations', str(params.get('use_citations', True)),
             '--cite_out_weight', str(params.get('cite_out_weight', 1.0)),
             '--cite_in_weight', str(params.get('cite_in_weight', 1.0)),
             '--cite_out_th', str(params.get('cite_out_th', 0.0)),
