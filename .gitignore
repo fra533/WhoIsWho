@@ -1,7 +1,7 @@
 __pycache__/
 .DS_Store
 .idea/
-data*
+dataset*
 out*
 bond/bond_debug_expanded/expanded_features_results.csv
 hyperopt_results*
