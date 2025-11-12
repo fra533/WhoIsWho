@@ -10,3 +10,5 @@ bond_unified_refined_analysis*
 tbr*
 synt_dataset*
 train_test_split*
+filtered_predictions_stats.json*
+filtered_predictions.json*
