@@ -421,6 +421,8 @@ class MultiMetricEvaluator:
             METRIC_WEIGHTS['lumping_error'] * lumping_score
         )
         
+        print(f"  composite: {composite}")
+
         return composite
     
     def print_results(self, detailed=True):
@@ -598,15 +600,24 @@ class MultiMetricEvaluator:
         return name_scores[:top_k]
     
     def save_results(self, output_path=None):
-        """Salva risultati in JSON"""
+        """Salva risultati in JSON - FORMATO COMPATIBILE CON OPTUNA"""
         if output_path is None:
             if self.output_dir:
                 output_path = self.output_dir / "evaluation_results.json"
             else:
-                output_path = Path("evaluation_results.json")
+                # ========== FIX: Salva in evaluation_results/ ==========
+                output_path = Path("evaluation_results") / "evaluation_results.json"
+                # =======================================================
         
-        output_data = {
-            'summary': self.results,
+        # Crea directory se non esiste
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Salva TUTTO al top level per compatibilità con Optuna
+        output_data = self.results.copy() if self.results else self._empty_results()
+        
+        # Aggiungi metadata
+        output_data['_metadata'] = {
             'statistics': self.stats,
             'timestamp': str(np.datetime64('now')),
             'files': {
@@ -616,7 +627,7 @@ class MultiMetricEvaluator:
         }
         
         save_json(output_data, output_path)
-        print(f"\n✅ Results saved to: {output_path}")
+        print(f"✅ Results saved to: {output_path}")
     
     def _empty_results(self):
         """Risultati vuoti"""
@@ -760,7 +771,30 @@ if __name__ == '__main__':
     import sys
     
     if len(sys.argv) == 1:
-        # Modalità interattiva
+        # Percorsi fissi (decommenta e modifica se necessario)
+        predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json'
+        ground_truth = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_ground_truth.json"
+        
+        # Valuta automaticamente
+        evaluator = MultiMetricEvaluator(predict, ground_truth)
+        results = evaluator.evaluate_all_metrics()
+        evaluator.print_results(detailed=True)
+        
+        # Trova nomi problematici
+        problematic = evaluator.find_problematic_names(top_k=10)
+        print("\n" + "="*70)
+        print("TOP 10 MOST PROBLEMATIC NAMES")
+        print("="*70)
+        for i, name_data in enumerate(problematic, 1):
+            print(f"\n{i}. {name_data['name']}")
+            print(f"   F1: {name_data['f1']:.4f}  |  P: {name_data['precision']:.4f}  |  R: {name_data['recall']:.4f}")
+        
+        # Salva risultati
+        evaluator.save_results("evaluation_results.json")
+        sys.exit(0)
+        # ======== FINE MODIFICHE ========
+        
+        # Modalità interattiva (questa parte non verrà più eseguita)
         print("\n" + "="*70)
         print("MULTI-METRIC EVALUATION - Interactive Mode")
         print("="*70)
