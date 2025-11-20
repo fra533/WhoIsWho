@@ -62,9 +62,23 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
         label(list): true label
         ft_tensor(tensor): node feature
         data(Pyg Graph Data): graph
+        
+        Returns (None, None, None) if graph files are missing
     """
     data_path = join(args.save_path, 'graph')
     datapath = join(data_path, args.mode, name)
+
+    # ========== AGGIUNGI QUESTO CHECK ALL'INIZIO ==========
+    # Check if graph files exist
+    feats_path = join(datapath, 'feats_p.npy')
+    adj_path = join(datapath, 'adj_attr.txt')
+    
+    if not os.path.exists(feats_path) or not os.path.exists(adj_path):
+        print(f"⚠️  WARNING: Missing graph files for {name}")
+        print(f"    feats_p.npy exists: {os.path.exists(feats_path)}")
+        print(f"    adj_attr.txt exists: {os.path.exists(adj_path)}")
+        return None, None, None
+    # ======================================================
 
     # Load label
     if args.mode == "train":
