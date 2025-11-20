@@ -12,3 +12,8 @@ synt_dataset*
 train_test_split*
 filtered_predictions_stats.json*
 filtered_predictions.json*
+best_params_trial49.json*
+evaluation_results.json*
+best_parameters.json*
+hyperopt_multimetric_results*
+production_valid_20251119_170800*
