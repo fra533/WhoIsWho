@@ -301,8 +301,7 @@ if __name__ == "__main__":
     dump_features_relations_to_file()
     
     print("\n[3/3] Building graphs...")
-    #build_graph()
-    
+    build_graph()
     print("\n" + "="*70)
     print("✓ PREPROCESSING COMPLETATO!")
     print("="*70)
