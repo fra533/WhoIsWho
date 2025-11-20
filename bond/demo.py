@@ -45,8 +45,8 @@ def pipeline(model):
     # Module-1: Data Loading (solo se necessario)
     if skip_preprocess:
         print("\n⏭️  Skipping preprocessing (SKIP_PREPROCESS=1)")
-    #elif check_preprocessing_done(args.mode):
-     #   print("\n✓ Preprocessing already done, skipping...")
+    elif check_preprocessing_done(args.mode):
+        print("\n✓ Preprocessing already done, skipping...")
     else:
         print("\n🔄 Running preprocessing...")
         print("\n[1/3] Loading and dumping name publications...")
