@@ -310,11 +310,11 @@ class ClusterConfidenceScorer:
             
             # Interpretazione
             if scores['overall'] >= 0.8:
-                print(f"   → ✅ HIGH CONFIDENCE - Likely correct")
+                print(f"   →  HIGH CONFIDENCE - Likely correct")
             elif scores['overall'] >= 0.6:
-                print(f"   → ⚡ MEDIUM CONFIDENCE - Review recommended")
+                print(f"   →  MEDIUM CONFIDENCE - Review recommended")
             else:
-                print(f"   → ⚠️ LOW CONFIDENCE - Likely incorrect")
+                print(f"   →  LOW CONFIDENCE - Likely incorrect")
     
     def recommend_threshold(self):
         """
@@ -373,8 +373,8 @@ class ClusterConfidenceScorer:
         with open(stats_file, 'w', encoding='utf-8') as f:
             json.dump(stats, f, indent=2)
         
-        print(f"\n✅ Filtered results saved to: {output_file}")
-        print(f"✅ Statistics saved to: {stats_file}")
+        print(f"\n Filtered results saved to: {output_file}")
+        print(f" Statistics saved to: {stats_file}")
         
         print("\n" + "="*70)
         print("FILTERING STATISTICS")
@@ -420,7 +420,7 @@ def main():
     # Calcola scores
     print("Computing confidence scores...")
     scorer.compute_all_scores()
-    print("✅ Done!")
+    print("Done!")
     
     # Analizza distribuzione
     if args.analyze:
@@ -446,4 +446,51 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    
+    # ============================================================
+    # Se NON ci sono argomenti command-line, usa path fissi
+    # ============================================================
+    if len(sys.argv) == 1:
+        # 📁 MODIFICA QUESTI PATH
+        predictions_file = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json"
+        output_file = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\filtered_predictions.json"
+        pubs_file = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_pub.json"
+        
+        # ⚙️ CONFIGURAZIONE
+        analyze_distribution = True
+        auto_threshold = True
+        manual_threshold = 0.6
+        
+        # ESECUZIONE
+        print("\n" + "="*70)
+        print(" CLUSTER CONFIDENCE SCORING (Automatic Mode)")
+        print("="*70)
+        print(f"\nInput:  {predictions_file}")
+        print(f"Output: {output_file}")
+        
+        scorer = ClusterConfidenceScorer(predictions_file, pubs_file)
+        
+        print("\n📊 Computing confidence scores...")
+        scorer.compute_all_scores()
+        print(" Scores computed!")
+        
+        if analyze_distribution:
+            scorer.analyze_confidence_distribution()
+        
+        if auto_threshold:
+            print("\n Computing recommended threshold...")
+            threshold = scorer.recommend_threshold()
+        else:
+            threshold = manual_threshold
+            print(f"\n  Using manual threshold: {threshold:.2f}")
+        
+        print(f"\n Filtering clusters with threshold: {threshold:.2f}")
+        scorer.save_filtered_results(output_file, threshold)
+        
+        print("\n" + "="*70)
+        print(" COMPLETED!")
+        print("="*70)
+    else:
+        # Se ci sono argomenti, usa la funzione main() originale
+        main()
