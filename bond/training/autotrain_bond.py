@@ -147,18 +147,54 @@ class BONDTrainer:
             # ==== Load data ====
             label, ft_list, data = load_graph(name)
             
-            # SOLUZIONE: Skip grafi troppo piccoli o senza edge
+            # ========== SEMPLIFICA QUESTO CHECK ==========
+            # Se load_graph ritorna None, significa che i file mancano
+            if label is None or ft_list is None or data is None:
+                print(f"SKIPPING {name}: graph files missing or malformed")
+                print(f"  → Assigning each paper to separate cluster")
+                
+                # Conta quanti paper ha questo autore per creare cluster separati
+                name_pubs = []
+                if datatype == 'train':
+                    for aid in pubs[name]:
+                        name_pubs.extend(pubs[name][aid])
+                else:
+                    for pid in pubs[name]:
+                        name_pubs.append(pid)
+                
+                # Ogni paper in un cluster separato
+                results[name] = list(range(len(name_pubs)))
+                skipped_authors += 1
+                small_graph_info.append((name, len(name_pubs), 0, "Missing files"))
+                continue
+            # =============================================
+            
+            # Ora possiamo fare check aggiuntivi su dimensioni
             n_nodes = ft_list.shape[0]
             n_edges = data.edge_index.shape[1]
             
             if n_nodes < 5 or n_edges == 0:
                 print(f"SKIPPING {name}: graph too small/empty (nodes={n_nodes}, edges={n_edges})")
                 print(f"  → Assigning each paper to separate cluster")
-                # Ogni paper diventa un cluster separato
                 results[name] = list(range(n_nodes))
                 skipped_authors += 1
-                small_graph_info.append((name, n_nodes, n_edges))
+                small_graph_info.append((name, n_nodes, n_edges, "Too small"))
                 continue
+            
+            # =============================================
+            
+            # Ora possiamo fare check aggiuntivi su dimensioni
+            n_nodes = ft_list.shape[0]
+            n_edges = data.edge_index.shape[1]
+            
+            if n_nodes < 5 or n_edges == 0:
+                print(f"SKIPPING {name}: graph too small/empty (nodes={n_nodes}, edges={n_edges})")
+                print(f"  → Assigning each paper to separate cluster")
+                results[name] = list(range(n_nodes))
+                skipped_authors += 1
+                small_graph_info.append((name, n_nodes, n_edges, "Too small"))
+                continue
+        
             
             # Test preliminare per rilevare grafi problematici
             try:
