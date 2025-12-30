@@ -11,6 +11,8 @@ from loadmodel.att_gnn import ATTGNN
 from dataset.load_data import load_dataset, load_graph
 from dataset.save_results import save_results
 from os.path import join,dirname
+import os
+import json
 from .generate_pair import generate_pair
 
 from params import set_params
@@ -56,23 +58,49 @@ class BONDTrainer:
     
     def matx2list(self, adj):
         """
-        Transform matrix to list.
+        Transform similarity matrix to cluster labels.
+        
+        Args:
+            adj: N x N similarity matrix where adj[i][j] = 1 if i and j are in same cluster
+            
+        Returns:
+            labels: List of cluster labels, e.g. [0, 0, 1, 2, 2]
         """
-        adj_preds = []
-        for i in adj:
-            if isinstance(i, np.ndarray):
-                temp = i
+        # Converti a numpy se necessario
+        if not isinstance(adj, np.ndarray):
+            if torch.is_tensor(adj):
+                adj = adj.cpu().detach().numpy()
             else:
-                temp = i.cpu().detach().numpy()
-            for idx, j in enumerate(temp):
-                if j == 1: 
-                    adj_preds.append(idx)
-                    break
-                if idx == len(temp)-1:
-                    adj_preds.append(-1)
-
-        return adj_preds
-
+                adj = np.array(adj)
+        
+        n_papers = adj.shape[0]
+        labels = [-1] * n_papers
+        current_label = 0
+        assigned = [False] * n_papers
+        
+        for i in range(n_papers):
+            if assigned[i]:
+                continue
+            
+            # Trova tutti i paper connessi a i (stesso cluster)
+            cluster_members = []
+            for j in range(n_papers):
+                if adj[i][j] == 1:
+                    cluster_members.append(j)
+            
+            # Assegna label
+            if len(cluster_members) > 0:
+                for j in cluster_members:
+                    labels[j] = current_label
+                    assigned[j] = True
+                current_label += 1
+            else:
+                # Paper isolato (non dovrebbe succedere se matrice è simmetrica)
+                labels[i] = -1
+                assigned[i] = True
+        
+        return labels
+        
     def post_match(self, pred, pubs, name, mode):
         """
         Post-match outliers.
@@ -130,30 +158,68 @@ class BONDTrainer:
                         pred[j] = pred[i]
         return pred
 
+    def labels_to_clusters(self, pred, paper_ids):
+        """
+        Versione pulita: assume che i dati siano già sincronizzati nel fit()
+        """
+        from collections import defaultdict
+        cluster_dict = defaultdict(list)
+        
+        # Ora len(pred) sarà SEMPRE uguale a len(paper_ids)
+        for idx, label in enumerate(pred):
+            # Trasformiamo il tensor in int se necessario
+            l_val = label.item() if hasattr(label, 'item') else label
+            cluster_dict[l_val].append(paper_ids[idx])
+        
+        return list(cluster_dict.values())
+
     def fit(self, datatype):
         names, pubs = load_dataset(datatype)
+        
+        if datatype in ['valid', 'test']:
+            # Carica ground truth
+            if datatype == 'valid':
+                gt_file = join(args.save_path, 'src', 'sna-valid', 'sna_valid_ground_truth.json')
+            else:
+                gt_file = join(args.save_path, 'src', 'sna-test', 'sna_test_ground_truth.json')
+            
+            if os.path.exists(gt_file):
+                import json
+                with open(gt_file, 'r', encoding='utf-8') as f:
+                    ground_truth = json.load(f)
+                
+                # Filtra
+                gt_names = set(ground_truth.keys())
+                names = [n for n in names if n in gt_names]
+                pubs = {n: pubs[n] for n in names if n in pubs}
+                
+                print(f"\n{'='*70}")
+                print(f"FILTERED TO GROUND TRUTH: {len(names)} authors")
+                print(f"{'='*70}\n")
+            else:
+                print(f"⚠️  Ground truth file not found: {gt_file}")
+        # =========================================================
+        
         results = {}
         
-        # Statistiche per monitorare gli skip
+        # Statistiche per monitorare
         total_authors = len(names)
-        skipped_authors = 0
-        small_graph_info = []
+        processed_authors = 0
+        special_case_authors = 0
+        special_case_info = []
 
         f1_list = []
         for name in names:
-            print("trainning:", name)
+            print("training:", name)
             results[name] = []
 
             # ==== Load data ====
             label, ft_list, data = load_graph(name)
             
-            # ========== SEMPLIFICA QUESTO CHECK ==========
-            # Se load_graph ritorna None, significa che i file mancano
+            # Check se load fallito
             if label is None or ft_list is None or data is None:
-                print(f"SKIPPING {name}: graph files missing or malformed")
-                print(f"  → Assigning each paper to separate cluster")
-                
-                # Conta quanti paper ha questo autore per creare cluster separati
+                print(f"  ❌ Failed to load graph files")
+                # Crea cluster per tutti i paper
                 name_pubs = []
                 if datatype == 'train':
                     for aid in pubs[name]:
@@ -162,79 +228,13 @@ class BONDTrainer:
                     for pid in pubs[name]:
                         name_pubs.append(pid)
                 
-                # Ogni paper in un cluster separato
-                results[name] = list(range(len(name_pubs)))
-                skipped_authors += 1
-                small_graph_info.append((name, len(name_pubs), 0, "Missing files"))
-                continue
-            # =============================================
-            
-            # Ora possiamo fare check aggiuntivi su dimensioni
-            n_nodes = ft_list.shape[0]
-            n_edges = data.edge_index.shape[1]
-            
-            if n_nodes < 5 or n_edges == 0:
-                print(f"SKIPPING {name}: graph too small/empty (nodes={n_nodes}, edges={n_edges})")
-                print(f"  → Assigning each paper to separate cluster")
-                results[name] = list(range(n_nodes))
-                skipped_authors += 1
-                small_graph_info.append((name, n_nodes, n_edges, "Too small"))
+                clusters = [[pid] for pid in name_pubs] if name_pubs else []
+                results[name] = clusters
+                special_case_authors += 1
+                special_case_info.append((name, 0, 0, "Load failed"))
                 continue
             
-            # =============================================
-            
-            # Ora possiamo fare check aggiuntivi su dimensioni
-            n_nodes = ft_list.shape[0]
-            n_edges = data.edge_index.shape[1]
-            
-            if n_nodes < 5 or n_edges == 0:
-                print(f"SKIPPING {name}: graph too small/empty (nodes={n_nodes}, edges={n_edges})")
-                print(f"  → Assigning each paper to separate cluster")
-                results[name] = list(range(n_nodes))
-                skipped_authors += 1
-                small_graph_info.append((name, n_nodes, n_edges, "Too small"))
-                continue
-        
-            
-            # Test preliminare per rilevare grafi problematici
-            try:
-                # Prova a fare un forward pass di test
-                test_model = GAE(ATTGNN([ft_list.shape[1]] + args.hidden_dim + [int(ft_list.shape[0]*args.compress_ratio)]))
-                test_model.to(device)
-                with torch.no_grad():
-                    test_logits, test_embd = test_model.encode(ft_list.float().to(device), data.edge_index.to(device), data.edge_attr.to(device) if data.edge_attr is not None else None)
-                    test_recon = test_model.recon_loss(test_embd, data.edge_index.to(device))
-                    if torch.isnan(test_recon):
-                        print(f"SKIPPING {name}: graph causes NaN in reconstruction (nodes={n_nodes}, edges={n_edges})")
-                        print(f"  → Assigning each paper to separate cluster")
-                        results[name] = list(range(n_nodes))
-                        skipped_authors += 1
-                        small_graph_info.append((name, n_nodes, n_edges, "NaN"))
-                        continue
-                del test_model  # Libera memoria
-            except Exception as e:
-                print(f"SKIPPING {name}: graph causes error during test (nodes={n_nodes}, edges={n_edges})")
-                print(f"  → Error: {e}")
-                print(f"  → Assigning each paper to separate cluster")
-                results[name] = list(range(n_nodes))
-                skipped_authors += 1
-                small_graph_info.append((name, n_nodes, n_edges, "Error"))
-                continue
-            
-            # CORREZIONE CRITICA: Assicurati che edge_index sia di tipo long
-            data.edge_index = data.edge_index.long()
-            
-            num_cluster = int(ft_list.shape[0]*args.compress_ratio)
-            layer_shape = []
-            input_layer_shape = ft_list.shape[1]
-            hidden_layer_shape = args.hidden_dim
-            output_layer_shape = num_cluster #adjust output-layer size of FC layer.
-            
-            layer_shape.append(input_layer_shape)
-            layer_shape.extend(hidden_layer_shape)
-            layer_shape.append(output_layer_shape)
-            
-            # get the list of pid(paper-id)
+            # Get paper IDs list
             name_pubs = []
             if datatype == 'train':
                 for aid in pubs[name]:
@@ -242,6 +242,89 @@ class BONDTrainer:
             else:
                 for pid in pubs[name]:
                     name_pubs.append(pid)
+
+            n_nodes = ft_list.shape[0]
+            n_edges = data.edge_index.shape[1]
+
+            # ===== CHECK DI SICUREZZA =====
+            if n_nodes != len(name_pubs):
+                print(f"  ❌ CRITICAL ERROR: Graph({n_nodes}) != Papers({len(name_pubs)})")
+                print(f"     Graph building failed for {name}!")
+                print(f"     This should NOT happen if graphs were built correctly.")
+                print(f"     → SKIPPING {name}")
+                
+                # Crea singleton clusters come fallback
+                clusters = [[pid] for pid in name_pubs]
+                results[name] = clusters
+                special_case_authors += 1
+                special_case_info.append((name, n_nodes, len(name_pubs), "Build error"))
+                continue
+            # ==============================
+            
+            print(f"  Graph: {n_nodes} nodes, {n_edges} edges")
+            
+            # ===== GESTIONE CASI SPECIALI =====
+            
+            # CASO 1: Single paper
+            if n_nodes == 1:
+                print(f"  → Single paper, creating 1 cluster")
+                clusters = [[name_pubs[0]]]
+                results[name] = clusters
+                special_case_authors += 1
+                special_case_info.append((name, n_nodes, n_edges, "Single paper"))
+                continue
+            
+            # CASO 2: No edges
+            if n_edges == 0:
+                print(f"  → No edges, creating {n_nodes} singleton clusters")
+                clusters = [[pid] for pid in name_pubs]
+                results[name] = clusters
+                special_case_authors += 1
+                special_case_info.append((name, n_nodes, n_edges, "No edges"))
+                continue
+            
+            # CASO 3: Very small graph (2-4 nodes)
+            if n_nodes <= 4:
+                print(f"  → Very small graph, using simplified clustering")
+                try:
+                    from sklearn.metrics.pairwise import euclidean_distances
+                    
+                    distances = euclidean_distances(ft_list.cpu().numpy())
+                    labels = DBSCAN(eps=args.db_eps*2, min_samples=1, metric='precomputed').fit_predict(distances)
+                    
+                    clusters = self.labels_to_clusters(labels.tolist(), name_pubs)
+                    results[name] = clusters
+                    
+                    print(f"  → Created {len(clusters)} clusters")
+                    special_case_authors += 1
+                    special_case_info.append((name, n_nodes, n_edges, "Simplified"))
+                    continue
+                except Exception as e:
+                    print(f"  → Simplified clustering failed: {e}, using singletons")
+                    clusters = [[pid] for pid in name_pubs]
+                    results[name] = clusters
+                    special_case_authors += 1
+                    special_case_info.append((name, n_nodes, n_edges, "Failed"))
+                    continue
+            
+            # CASO 4: Small graph (5-9 nodes) - warning ma continua
+            if n_nodes < 10:
+                print(f"  ⚠️  Small graph, results may be suboptimal")
+            
+            # ===== TRAINING NORMALE (>=5 nodes con edges) =====
+            
+            # Assicura tipo corretto
+            data.edge_index = data.edge_index.long()
+            
+            num_cluster = int(ft_list.shape[0]*args.compress_ratio)
+            layer_shape = []
+            input_layer_shape = ft_list.shape[1]
+            hidden_layer_shape = args.hidden_dim
+            output_layer_shape = num_cluster
+            
+            layer_shape.append(input_layer_shape)
+            layer_shape.extend(hidden_layer_shape)
+            layer_shape.append(output_layer_shape)
 
             # ==== Init model ====
             model = GAE(ATTGNN(layer_shape))
@@ -262,7 +345,19 @@ class BONDTrainer:
                 db_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(dis) 
                 db_label = torch.from_numpy(db_label)
                 db_label = db_label.to(device) 
-                
+                '''
+                print(f"\n[DEBUG] {name}:")
+                #print(f"  -> DBSCAN Labels trovate: {unique_labels}")
+                if -1 in unique_labels:
+                    print(f"  -> ATTENZIONE: DBSCAN ha trovato RUMORE (-1).")
+
+                if args.post_match:
+                    print("  -> Eseguo POST-MATCH (che potrebbe separare i cluster).")
+                else:
+                    print("  -> POST-MATCH disabilitato.")
+
+                unique_labels = set(db_label.cpu().numpy())
+                '''
                 # change to one-hot form
                 class_matrix = torch.from_numpy(self.onehot_encoder(db_label))
                 # get N * N matrix
@@ -275,9 +370,9 @@ class BONDTrainer:
                 loss_cluster = F.binary_cross_entropy_with_logits(global_label, local_label)
                 loss_recon = model.recon_loss(embd, data.edge_index)
                 
-                # Controllo per NaN - se si verifica, skippa questo epoch
+                # Controllo per NaN
                 if torch.isnan(loss_cluster) or torch.isnan(loss_recon):
-                    print(f"  WARNING: NaN detected at epoch {epoch} (cluster: {loss_cluster.item()}, recon: {loss_recon.item()})")
+                    print(f"  WARNING: NaN detected at epoch {epoch}")
                     continue
 
                 w_cluster = args.cluster_w
@@ -305,38 +400,53 @@ class BONDTrainer:
                 local_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(lc_dis) 
                 gl_dis = pairwise_distances(gl_label.cpu().detach().numpy(), metric='cosine')
                 gl_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(gl_dis) 
-                 
-                pred = []           
-                # change to one-hot form
-                class_matrix = torch.from_numpy(self.onehot_encoder(local_label))
-                # get N * N matrix
-                local_label = torch.mm(class_matrix, class_matrix.t())
-                pred = self.matx2list(local_label)
+                
+                # ===== USA DIRETTAMENTE I LABEL =====
+                pred = local_label.tolist()
 
                 if args.post_match:
                     pred = self.post_match(pred, name_pubs, name, datatype)
 
+                # ===== CONVERTI LABEL IN CLUSTER =====
+                clusters = self.labels_to_clusters(pred, name_pubs)
+                
+                # ===== DEBUG (primi 3 autori processati normalmente) =====
+                if processed_authors < 3:
+                    print(f"\n{'='*70}")
+                    print(f"CLUSTERING DEBUG: {name}")
+                    print(f"{'='*70}")
+                    print(f"  Papers: {len(name_pubs)}")
+                    print(f"  Unique labels: {len(set(pred))}")
+                    print(f"  Outliers (label=-1): {sum(1 for l in pred if l == -1)}")
+                    print(f"  Clusters created: {len(clusters)}")
+                    print(f"  Cluster sizes: {sorted([len(c) for c in clusters], reverse=True)[:10]}")
+                    
+                    n_singletons = sum(1 for c in clusters if len(c) == 1)
+                    print(f"  Singletons: {n_singletons}/{len(clusters)} ({n_singletons/len(clusters)*100:.1f}%)")
+                    print(f"{'='*70}\n")
+                # ==================================================
+                
                 # Save results
-                results[name] = pred
+                results[name] = clusters
+                processed_authors += 1
 
         # Stampa statistiche finali
-        print("\n" + "="*50)
+        print("\n" + "="*70)
         print("TRAINING COMPLETED - STATISTICS")
-        print("="*50)
+        print("="*70)
         print(f"Total authors: {total_authors}")
-        print(f"Successfully trained: {total_authors - skipped_authors}")
-        print(f"Skipped (too small): {skipped_authors}")
+        print(f"GNN trained: {processed_authors}")
+        print(f"Special cases: {special_case_authors}")
         
-        if small_graph_info:
-            print(f"\nSkipped graphs details:")
-            for info in small_graph_info:
-                if len(info) == 3:  # Formato originale (name, nodes, edges)
-                    name, nodes, edges = info
-                    print(f"  - {name}: {nodes} nodes, {edges} edges (too small)")
-                else:  # Formato esteso (name, nodes, edges, reason)
-                    name, nodes, edges, reason = info
-                    print(f"  - {name}: {nodes} nodes, {edges} edges ({reason})")
+        if special_case_info:
+            print(f"\nSpecial case breakdown:")
+            case_types = {}
+            for name, nodes, edges, reason in special_case_info:
+                case_types[reason] = case_types.get(reason, 0) + 1
+            
+            for reason, count in case_types.items():
+                print(f"  {reason}: {count}")
         
         result_path = save_results(names, pubs, results)
         print(f"\nResults saved: {result_path}")
-        print("="*50)
+        print("="*70)
