@@ -16,27 +16,39 @@ def dump_json(obj, wfname, indent=None):
 
 
 def save_results(names, pubs, results):
-    output = {}
-    for name in names:
-        output[name] = []
-        name_pubs = []
-        if args.mode == 'train':
-            for aid in pubs[name]:
-                name_pubs.extend(pubs[name][aid])
-        else:
-            for pid in pubs[name]:
-                name_pubs.append(pid)
-
-        for i in set(results[name]):
-            oneauthor = []
-            for idx, j in enumerate(results[name]):
-                if i == j:
-                    oneauthor.append(name_pubs[idx])
-            output[name].append(oneauthor)
+    result_dict = {}
     
-    result_dir = 'out'
-    check_mkdir(result_dir)
-    result_path = join(result_dir, f'res.json')   
-
-    dump_json(output, result_path, indent=4)
-    return result_path
+    for name in names:
+        # Check formato pubs
+        if isinstance(pubs[name], dict):
+            # TRAIN format: dict di autori
+            paper_ids = []
+            for aid in pubs[name]:
+                paper_ids.extend(pubs[name][aid])
+        elif isinstance(pubs[name], list):
+            # VALID/TEST format: lista diretta
+            paper_ids = pubs[name]
+        else:
+            print(f"Warning: unexpected format for {name}")
+            paper_ids = []
+        
+        # Converti cluster in formato finale
+        clusters = results[name]
+        
+        # Assicurati che clusters sia lista di liste
+        if not isinstance(clusters, list):
+            print(f"Warning: {name} has wrong format, converting")
+            clusters = [[clusters]] if clusters else []
+        
+        result_dict[name] = clusters
+    
+    # Salva
+    output_dir = 'out'
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'res.json')
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(result_dict, f, indent=2, ensure_ascii=False)
+    
+    print(f"Results saved to: {output_file}")
+    return output_file
