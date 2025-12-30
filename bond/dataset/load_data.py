@@ -121,7 +121,7 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
             attr_cite_in = float(toks[10])   # NUOVO
         # ===========================================================
         else:
-            print('read adj_attr ERROR!\n')
+            #print('read adj_attr ERROR!\n')
             continue
 
         if args.rel_on == 'a':
@@ -154,22 +154,28 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
             else:
                 val_o = 0
 
-            # ===== MODIFICATO: Include citazioni nella logica =====
-            # Considera un edge valido se c'è ALMENO UNA relazione forte
+            th_c = args.coc_th
+            th_i = args.coi_th
+
             has_relation = (
                 (val_a > th_a) or 
                 (val_o > th_o) or 
                 (val_v > th_v) or 
-                (val_cite_out > 0) or  # NUOVO: almeno 1 co-citazione out
-                (val_cite_in > 0)      # NUOVO: almeno 1 co-citazione in
+                (val_cite_out > th_c) or  # ← Usa threshold!
+                (val_cite_in > th_i)      # ← Usa threshold!
             )
-            
+
             if has_relation:
                 srcs.append(src)
                 dsts.append(dst)
                 
-                # Peso edge: somma di tutte le relazioni
-                total_weight = val_a + val_o + val_v + val_cite_out + val_cite_in
+                total_weight = (
+                    val_a + 
+                    val_o + 
+                    val_v + 
+                    val_cite_out * args.cite_out_weight +
+                    val_cite_in * args.cite_in_weight
+                )
                 value.append(total_weight)
                 
                 # Attributi multi-dimensionali (5D ora)
