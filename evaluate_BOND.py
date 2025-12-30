@@ -145,12 +145,56 @@ class MultiMetricEvaluator:
         """
         Valuta un singolo nome con tutte le metriche
         Implementa Algorithm 6 del paper Kim (2019)
+        
+        AGGIORNAMENTI:
+        - Filtra truth clusters per includere solo papers presenti in predictions
+        - Aggiunge debug dettagliato per overlap
+        - Fix per calcolo corretto di TP/FP/FN nel Pairwise-F
         """
         # Prepara truth clusters
         truth_clusters = self._prepare_truth_clusters(truth_data)
         
         if not truth_clusters or not predicted_clusters:
             return self._empty_name_metrics()
+        
+        # ===== COSTRUISCI SET DI PAPERS PREDETTI =====
+        pred_papers = set()
+        for pc in predicted_clusters:
+            pred_papers.update(pc)
+        
+        # ===== FILTRA TRUTH CLUSTERS =====
+        # Include solo papers che sono stati predetti
+        # Questo è CRITICO per evitare TP=0 quando validation set è diverso da train
+        original_truth_papers = set()
+        for tc in truth_clusters:
+            original_truth_papers.update(tc)
+        
+        filtered_truth_clusters = []
+        for tc in truth_clusters:
+            filtered_tc = [p for p in tc if p in pred_papers]
+            if filtered_tc:  # Solo se rimangono papers dopo il filtro
+                filtered_truth_clusters.append(filtered_tc)
+        
+        # ===== DEBUG OVERLAP (primi 3 nomi) =====
+        if len(self.name_level_results) < 3:
+            overlap_papers = original_truth_papers & pred_papers
+            print(f"\n[DEBUG OVERLAP] {name}")
+            print(f"  Original truth papers: {len(original_truth_papers)}")
+            print(f"  Pred papers: {len(pred_papers)}")
+            print(f"  Overlap: {len(overlap_papers)} ({len(overlap_papers)/len(original_truth_papers)*100:.1f}%)")
+            print(f"  Truth clusters: {len(truth_clusters)} → {len(filtered_truth_clusters)} (after filter)")
+            
+            if len(overlap_papers) < len(original_truth_papers) * 0.5:
+                print(f"  ⚠️  Low overlap - possibly wrong ground truth file!")
+        # ============================================
+        
+        if not filtered_truth_clusters:
+            # Nessun overlap → predictions completamente sbagliate o wrong ground truth
+            print(f"  ⚠️  {name}: No overlap between truth and predictions!")
+            return self._empty_name_metrics()
+        
+        # Usa filtered truth clusters per evaluation
+        truth_clusters = filtered_truth_clusters
         
         # pIndex: mapping instance -> predicted_cluster_id
         pIndex = {}
@@ -177,6 +221,17 @@ class MultiMetricEvaluator:
             'cluster': {'match': 0},
             'split_lump': {'split': 0, 'lump': 0}
         }
+        
+        # ===== DEBUG CONTATORI (primi 3 nomi) =====
+        if len(self.name_level_results) < 3:
+            debug_info = {
+                'tp_total': 0,
+                'fp_total': 0,
+                'fn_total': 0,
+                'truth_pairs_total': 0,
+                'pred_pairs_total': 0
+            }
+        # ==========================================
         
         # ====== LOOP SUI TRUTH CLUSTERS ======
         for truth_cluster in truth_clusters:
@@ -211,35 +266,55 @@ class MultiMetricEvaluator:
                 # ACP: |Pi ∩ Tj|² / |Pi|
                 metrics['k_metric']['acp_sum'] += (overlap_size ** 2) / pred_sizes[pred_idx]
             
-            # ====== PAIRWISE-F ======
+            # ====== PAIRWISE-F: TRUE POSITIVES ======
             # Truth pairs in questo cluster
             truth_pairs = truth_size * (truth_size - 1) // 2
             
-            # Intersection pairs
+            # Intersection pairs (TP)
+            tp_this_cluster = 0
             for pred_idx, overlap_size in tMap.items():
                 intersection_pairs = overlap_size * (overlap_size - 1) // 2
-                metrics['pairwise']['tp'] += intersection_pairs
+                tp_this_cluster += intersection_pairs
             
-            # False negatives
-            metrics['pairwise']['fn'] += truth_pairs - sum(
-                overlap * (overlap - 1) // 2 for overlap in tMap.values()
-            )
+            metrics['pairwise']['tp'] += tp_this_cluster
+            
+            # ====== PAIRWISE-F: FALSE NEGATIVES ======
+            # Pairs nello stesso truth cluster MA divisi in pred clusters diversi
+            fn_this_cluster = truth_pairs - tp_this_cluster
+            metrics['pairwise']['fn'] += fn_this_cluster
+            
+            # ===== DEBUG =====
+            if len(self.name_level_results) < 3:
+                debug_info['tp_total'] += tp_this_cluster
+                debug_info['fn_total'] += fn_this_cluster
+                debug_info['truth_pairs_total'] += truth_pairs
+            # =================
             
             # ====== SPLITTING ERROR ======
             if max_pred_idx >= 0:
                 metrics['split_lump']['split'] += (truth_size - max_overlap)
         
-        # ====== FALSE POSITIVES (Pairwise-F) ======
+        # ====== PAIRWISE-F: FALSE POSITIVES ======
+        # Pairs nello stesso pred cluster MA provenienti da truth clusters diversi
         for pred_idx, pred_cluster in enumerate(predicted_clusters):
-            pred_pairs = len(pred_cluster) * (len(pred_cluster) - 1) // 2
+            pred_size = len(pred_cluster)
+            pred_pairs = pred_size * (pred_size - 1) // 2
             
-            # Conta coppie corrette
-            correct_pairs = 0
+            # Conta coppie corrette (TP già contati per questo pred cluster)
+            tp_in_this_pred = 0
             for truth_cluster in truth_clusters:
                 overlap = sum(1 for inst in truth_cluster if pIndex.get(inst) == pred_idx)
-                correct_pairs += overlap * (overlap - 1) // 2
+                tp_in_this_pred += overlap * (overlap - 1) // 2
             
-            metrics['pairwise']['fp'] += (pred_pairs - correct_pairs)
+            # FP = total pairs - correct pairs
+            fp_this_pred = pred_pairs - tp_in_this_pred
+            metrics['pairwise']['fp'] += fp_this_pred
+            
+            # ===== DEBUG =====
+            if len(self.name_level_results) < 3:
+                debug_info['fp_total'] += fp_this_pred
+                debug_info['pred_pairs_total'] += pred_pairs
+            # =================
         
         # ====== LUMPING ERROR ======
         for truth_cluster in truth_clusters:
@@ -256,8 +331,22 @@ class MultiMetricEvaluator:
                 
                 metrics['split_lump']['lump'] += (pred_cluster_size - truth_instances_in_pred)
         
+        # ===== PRINT DEBUG (primi 3 nomi) =====
+        if len(self.name_level_results) < 3:
+            print(f"\n[DEBUG PAIRWISE] {name}")
+            print(f"  Truth pairs total: {debug_info['truth_pairs_total']}")
+            print(f"  Pred pairs total: {debug_info['pred_pairs_total']}")
+            print(f"  TP: {debug_info['tp_total']}")
+            print(f"  FP: {debug_info['fp_total']}")
+            print(f"  FN: {debug_info['fn_total']}")
+            
+            if debug_info['tp_total'] == 0 and debug_info['truth_pairs_total'] > 0:
+                print(f"  ⚠️  TP=0 but truth has {debug_info['truth_pairs_total']} pairs!")
+                print(f"     → Predictions likely completely wrong for this name")
+        # ======================================
+        
         return metrics
-    
+
     def _prepare_truth_clusters(self, truth_data):
         """Converte truth_data in lista di cluster"""
         clusters = []
