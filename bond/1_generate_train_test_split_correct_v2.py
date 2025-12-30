@@ -35,10 +35,10 @@ import re
 BASE_PATH = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop"
 
 # INPUT FILES
-ALL_PUBS_FILE = join(BASE_PATH, "BondforOC", "results", "OC_results_with_citations", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BondforOC\scientometrics_complete.json")
-SIMPLE_GT_FILE = join(BASE_PATH, "BondforOC", "results", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BondforOC\results\scientometrics_raw.json")
+ALL_PUBS_FILE = join(BASE_PATH, "BondforOC", "results", "OC_results_with_citations", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BondforOC\results\bonddata+citations\metadata_with_citations_pub.json")
+SIMPLE_GT_FILE = join(BASE_PATH, "BondforOC", "results", r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BondforOC\results\bonddata+citations\metadata_with_citations_raw.json")
 # OUTPUT
-OUTPUT_DIR = join(BASE_PATH, "BOND-OC", "WhoIsWho", "train_test_split_scientometrics")
+OUTPUT_DIR = join(BASE_PATH, "BOND-OC", "WhoIsWho", "train_test_split_bondoriginale+cit")
 
 TRAIN_RATIO = 0.8
 RANDOM_SEED = 42
