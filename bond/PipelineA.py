@@ -628,16 +628,25 @@ class BondPipeline:
         print(f"\nPredictions: {self.results['predictions']}")
         
         try:
-            from cluster_confidence_scoring import ClusterConfidenceScorer
+            from cluster_confidence_scoring import ImprovedClusterConfidenceScorer
             
-            # ========== FIX: Percorso assoluto e crea directory ==========
             output_file = Path('out') / 'filtered_predictions.json'
             output_file.parent.mkdir(parents=True, exist_ok=True)
-            # ============================================================
             
-            scorer = ClusterConfidenceScorer(
-                str(Path(self.results['predictions']).resolve()),  
-                pubs_file=None  
+            if self.eval_mode == 'train':
+                pub_file = self.base_path / 'src' / 'train' / 'train_pub.json'
+            elif self.eval_mode == 'valid':
+                pub_file = self.base_path / 'src' / 'sna-valid' / 'sna_valid_pub.json'
+            elif self.eval_mode == 'test':
+                pub_file = self.base_path / 'src' / 'sna-test' / 'sna_test_pub.json'
+            else:
+                pub_file = None
+            
+            pub_file_path = str(pub_file) if pub_file and pub_file.exists() else None
+            
+            scorer = ImprovedClusterConfidenceScorer(
+                str(Path(self.results['predictions']).resolve()),
+                pubs_file=pub_file_path
             )
             
             print("\nComputing confidence scores...")
