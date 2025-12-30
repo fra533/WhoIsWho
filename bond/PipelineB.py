@@ -432,14 +432,13 @@ class ProductionInference:
         print(f"Publications: {pub_file.name if pub_file else 'Not available (using simplified scoring)'}")
         
         try:
-            from cluster_confidence_scoring import ClusterConfidenceScorer
+            from cluster_confidence_scoring import ImprovedClusterConfidenceScorer
             
             # Create scorer
-            scorer = ClusterConfidenceScorer(
+            scorer = ImprovedClusterConfidenceScorer(
                 str(pred_file),
                 pubs_file=str(pub_file) if pub_file else None
             )
-            
             # Compute scores
             print("\n📊 Computing confidence scores...")
             scorer.compute_all_scores()
