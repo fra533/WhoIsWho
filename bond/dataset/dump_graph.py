@@ -12,6 +12,23 @@ from bond.params import set_params
 
 args = set_params()
 
+# ============================================================
+# [AGGIUNTO] FUNZIONE DI NORMALIZZAZIONE ID
+# ============================================================
+def clean_id(identifier):
+    """
+    Rimuove prefissi comuni (doi:, omid:, ecc.) e pulisce la stringa
+    per permettere il confronto tra metadati e citazioni.
+    """
+    if not identifier:
+        return ""
+    identifier = str(identifier).lower().strip()
+    prefixes = ["doi:", "omid:", "openalex:", "pmid:", "https://doi.org/", "http://doi.org/"]
+    for p in prefixes:
+        if identifier.startswith(p):
+            identifier = identifier[len(p):]
+    return identifier
+
 def gen_relations(name, mode, target):
     dirpath = join(args.save_path, 'relations', mode, name)
     temp = set()
@@ -54,65 +71,54 @@ def save_label_pubs(mode, name, raw_pubs, save_path):
     return pubs
 
 def save_emb(mode, name, pubs, save_path):
-    """
-    Crea feats_p.npy con embeddings W2V per ogni paper.
-    Include TUTTI i paper, anche quelli senza embedding valido (usa zero vector).
-    """
-    import torch  # Import necessario
-    
-    # Percorso agli embeddings W2V pre-generati
     emb_path = join(args.save_path, 'paper_emb', mode, name, 'ptext_emb.pkl')
     tcp_path = join(args.save_path, 'paper_emb', mode, name, 'tcp.pkl')
-    
-    # Dimensione embedding
     ft_dim = 256
-    
-    # Carica embeddings se esistono
     ptext_emb = {}
-    tcp = set()
-    
     if os.path.exists(emb_path):
         with open(emb_path, 'rb') as f:
             ptext_emb = pickle.load(f)
-        
-        if os.path.exists(tcp_path):
-            with open(tcp_path, 'rb') as f:
-                tcp = pickle.load(f)
-    else:
-        print(f"  ⚠️  No embeddings for {name}, using zero vectors")
     
-    # ===== CREA feats_p.npy CON TUTTI I PAPER (COME TENSOR) =====
     feats_dict = {}
-    missing_count = 0
-    
     for idx, pid in enumerate(pubs):
         if pid in ptext_emb:
-            # Converti numpy array → torch tensor
             feats_dict[idx] = torch.tensor(ptext_emb[pid], dtype=torch.float32)
         else:
-            # Zero vector come tensor
             feats_dict[idx] = torch.zeros(ft_dim, dtype=torch.float32)
-            missing_count += 1
     
-    # Salva come numpy dict
     np.save(join(save_path, 'feats_p.npy'), feats_dict)
-    
-    if missing_count > 0:
-        print(f"  ⚠️  {name}: {missing_count}/{len(pubs)} papers with zero vectors")
-    # ============================================================
 
+# ============================================================
+# [MODIFICATO] COSTRUZIONE RESOLVER CON PULIZIA
+# ============================================================
+def build_id_resolver(pubs_dict):
+    """
+    Crea una mappa che associa ogni DOI o OMID pulito all'ID interno (pid).
+    """
+    resolver = {}
+    for pid, pub in pubs_dict.items():
+        # Mappa il DOI pulito
+        if pub.get('doi'):
+            resolver[clean_id(pub['doi'])] = pid
+        # Mappa l'OMID pulito
+        if pub.get('omid'):
+            resolver[clean_id(pub['omid'])] = pid
+    return resolver
+
+# ============================================================
+# [MODIFICATO] SALVATAGGIO GRAFO CON LOGICA DI MATCH ROBUSTA
+# ============================================================
 def save_graph(name, pubs, save_path, mode):
     paper_dict = {pid: idx for idx, pid in enumerate(pubs)}
     cp_a, cp_o = set(), set()
 
-    # ===== AGGIUNGI QUESTO ALL'INIZIO =====
-    # Salva pids.txt (mapping indici → paper IDs)
-    with open(join(save_path, 'pids.txt'), 'w', encoding='utf-8') as f:
-        for pid in pubs:
-            f.write(f'{pid}\n')
-    # ======================================
+    # Carichiamo i metadati JSON dell'autore per il resolver
+    pubs_json_path = join(args.save_path, 'names_pub', mode, name + '.json')
+    pubs_dict = load_json(pubs_json_path)
+    id_resolver = build_id_resolver(pubs_dict)
 
-    # Carica relazioni
+    # DEBUG opzionale: print(f"Resolver per {name}: {len(id_resolver)} chiavi")
+
     rels = {
         'auth': gen_relations(name, mode, 'author'),
         'org': gen_relations(name, mode, 'org'),
@@ -121,7 +127,6 @@ def save_graph(name, pubs, save_path, mode):
         'cin': gen_relations(name, mode, 'cite_in')
     }
 
-    # Identifica outlier (paper senza relazioni base)
     for pid in paper_dict:
         if pid not in rels['auth']: cp_a.add(paper_dict[pid])
         if pid not in rels['org']: cp_o.add(paper_dict[pid])
@@ -130,11 +135,22 @@ def save_graph(name, pubs, save_path, mode):
     with open(join(save_path, 'adj_attr.txt'), 'w') as f:  
         for p1 in paper_dict:
             p1_idx = paper_dict[p1]
+            
+            # --- TRADUZIONE RIFERIMENTI DI P1 ---
+            # Convertiamo i DOI/OMID citati da p1 in ID interni presenti nel set
+            p1_internal_references = set()
+            if p1 in rels['cout']:
+                for raw_id in rels['cout'][p1]:
+                    # Puliamo l'ID della citazione (rimuove "doi:", ecc.)
+                    target_id = clean_id(raw_id)
+                    internal_id = id_resolver.get(target_id)
+                    if internal_id:
+                        p1_internal_references.add(internal_id)
+
             for p2 in paper_dict:
                 p2_idx = paper_dict[p2] 
                 if p1 == p2: continue
 
-                # Helper per calcolare count e jaccard
                 def calc_rel(key):
                     if p1 in rels[key] and p2 in rels[key]:
                         s1, s2 = set(rels[key][p1]), set(rels[key][p2])
@@ -143,20 +159,29 @@ def save_graph(name, pubs, save_path, mode):
                         return cnt, jac
                     return 0, 0.0
 
-                # Calcola metriche
                 co_a, _ = calc_rel('auth')
                 co_o, jac_o = calc_rel('org')
                 co_v, jac_v = calc_rel('ven')
+
+                # --- CITAZIONE DIRETTA ---
+                # Se l'ID di p2 è tra i riferimenti risolti di p1
+                direct_cite = 1 if p2 in p1_internal_references else 0
+                
+                # --- CO-CITAZIONE / BIBLIOGRAPHIC COUPLING ---
                 co_cout, jac_cout = calc_rel('cout')
                 co_cin, jac_cin = calc_rel('cin')
 
-                # Scrivi se c'è almeno una relazione
-                if (co_a + co_o + co_v + co_cout + co_cin) > 0:
+                # Valori finali per colonne 8-9 (Cite Out)
+                val_cite_out = co_cout + direct_cite
+                attr_cite_out = max(jac_cout, 1.0 if direct_cite else 0.0)
+
+                # Scrittura 11 colonne
+                if (co_a + co_o + co_v + val_cite_out + co_cin) > 0:
                     f.write(f'{p1_idx}\t{p2_idx}\t'
                             f'{co_a}\t'
                             f'{co_o}\t{jac_o:.4f}\t'
                             f'{co_v}\t{jac_v:.4f}\t'
-                            f'{co_cout}\t{jac_cout:.4f}\t'
+                            f'{val_cite_out}\t{attr_cite_out:.4f}\t'
                             f'{co_cin}\t{jac_cin:.4f}\n')
                 
     with open(join(save_path, 'rel_cp.txt'), 'w') as out_f:
@@ -176,16 +201,9 @@ def build_graph():
         for name in tqdm(raw_pubs):
             save_path = join(args.save_path, 'graph', mode, name)
             check_mkdir(save_path)
-            
-            # Step 1: Estrai lista paper
             pubs = save_label_pubs(mode, name, raw_pubs, save_path)
-            
-            # Step 2: Crea feats_p.npy con embeddings W2V
             save_emb(mode, name, pubs, save_path)
-            
-            # Step 3: Costruisci grafo (adj_attr.txt, pids.txt, rel_cp.txt)
             save_graph(name, pubs, save_path, mode) 
-
 
 if __name__ == "__main__":
     build_graph()
