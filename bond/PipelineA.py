@@ -441,7 +441,7 @@ class BondPipeline:
             print("\n🔄 Forcing Word2Vec rerun (will regenerate embeddings)...")
         
         try:
-            print("\nRunning Word2Vec training + embeddings generation...")
+            print("\nRunning Word2Vec (or specter) training + embeddings generation...")
             
             w2v_script = Path(r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\train_w2v.py")
             

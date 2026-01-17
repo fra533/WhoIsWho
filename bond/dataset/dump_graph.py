@@ -12,9 +12,6 @@ from bond.params import set_params
 
 args = set_params()
 
-# ============================================================
-# [AGGIUNTO] FUNZIONE DI NORMALIZZAZIONE ID
-# ============================================================
 def clean_id(identifier):
     """
     Rimuove prefissi comuni (doi:, omid:, ecc.) e pulisce la stringa
@@ -88,9 +85,7 @@ def save_emb(mode, name, pubs, save_path):
     
     np.save(join(save_path, 'feats_p.npy'), feats_dict)
 
-# ============================================================
-# [MODIFICATO] COSTRUZIONE RESOLVER CON PULIZIA
-# ============================================================
+
 def build_id_resolver(pubs_dict):
     """
     Crea una mappa che associa ogni DOI o OMID pulito all'ID interno (pid).
@@ -105,19 +100,13 @@ def build_id_resolver(pubs_dict):
             resolver[clean_id(pub['omid'])] = pid
     return resolver
 
-# ============================================================
-# [MODIFICATO] SALVATAGGIO GRAFO CON LOGICA DI MATCH ROBUSTA
-# ============================================================
 def save_graph(name, pubs, save_path, mode):
     paper_dict = {pid: idx for idx, pid in enumerate(pubs)}
     cp_a, cp_o = set(), set()
 
-    # Carichiamo i metadati JSON dell'autore per il resolver
     pubs_json_path = join(args.save_path, 'names_pub', mode, name + '.json')
     pubs_dict = load_json(pubs_json_path)
     id_resolver = build_id_resolver(pubs_dict)
-
-    # DEBUG opzionale: print(f"Resolver per {name}: {len(id_resolver)} chiavi")
 
     rels = {
         'auth': gen_relations(name, mode, 'author'),
@@ -136,12 +125,9 @@ def save_graph(name, pubs, save_path, mode):
         for p1 in paper_dict:
             p1_idx = paper_dict[p1]
             
-            # --- TRADUZIONE RIFERIMENTI DI P1 ---
-            # Convertiamo i DOI/OMID citati da p1 in ID interni presenti nel set
             p1_internal_references = set()
             if p1 in rels['cout']:
                 for raw_id in rels['cout'][p1]:
-                    # Puliamo l'ID della citazione (rimuove "doi:", ecc.)
                     target_id = clean_id(raw_id)
                     internal_id = id_resolver.get(target_id)
                     if internal_id:
@@ -159,31 +145,42 @@ def save_graph(name, pubs, save_path, mode):
                         return cnt, jac
                     return 0, 0.0
 
-                co_a, _ = calc_rel('auth')
+                co_a, jac_a = calc_rel('auth')
                 co_o, jac_o = calc_rel('org')
                 co_v, jac_v = calc_rel('ven')
 
-                # --- CITAZIONE DIRETTA ---
-                # Se l'ID di p2 è tra i riferimenti risolti di p1
-                direct_cite = 1 if p2 in p1_internal_references else 0
-                
-                # --- CO-CITAZIONE / BIBLIOGRAPHIC COUPLING ---
                 co_cout, jac_cout = calc_rel('cout')
                 co_cin, jac_cin = calc_rel('cin')
-
-                # Valori finali per colonne 8-9 (Cite Out)
+                direct_cite = 1 if p2 in p1_internal_references else 0
                 val_cite_out = co_cout + direct_cite
                 attr_cite_out = max(jac_cout, 1.0 if direct_cite else 0.0)
 
-                # Scrittura 11 colonne
-                if (co_a + co_o + co_v + val_cite_out + co_cin) > 0:
+                # ===== LOGICA DI FILTRAGGIO STRINGENTE =====
+                
+                # 1. Co-autori forti: almeno 3 condivisi, Jaccard > 0.35
+                is_safe_coauthor = (co_a >= 3 and jac_a > 0.35)
+                
+                # 2. Citazione diretta: sempre valida
+                is_direct_citation = (direct_cite > 0)
+                
+                # 3. Metadati forti: org e venue quasi identici + almeno 1 coauthor
+                is_metadata_strong = (jac_o > 0.9 and jac_v > 0.9 and co_a >= 1)
+                
+                # 4. Combinazione media: 2 coauthor + metadati decenti
+                is_medium_combo = (
+                    co_a >= 2 and jac_a > 0.25 and 
+                    (jac_o > 0.7 or jac_v > 0.7)
+                )
+                
+                # ===== CREA EDGE SE UNA CONDIZIONE È SODDISFATTA =====
+                if is_direct_citation or is_safe_coauthor or is_medium_combo or is_metadata_strong:
                     f.write(f'{p1_idx}\t{p2_idx}\t'
                             f'{co_a}\t'
                             f'{co_o}\t{jac_o:.4f}\t'
                             f'{co_v}\t{jac_v:.4f}\t'
                             f'{val_cite_out}\t{attr_cite_out:.4f}\t'
-                            f'{co_cin}\t{jac_cin:.4f}\n')
-                
+                            f'{co_cin}\t{jac_cin:.4f}\n')  # 11 campi (come prima)
+                    
     with open(join(save_path, 'rel_cp.txt'), 'w') as out_f:
         for i in cp: out_f.write(f'{i}\n')
 

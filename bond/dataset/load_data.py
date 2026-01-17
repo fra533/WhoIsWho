@@ -51,13 +51,18 @@ def load_dataset(mode):
     return names, pubs
 
 
-def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
+def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th, th_c=args.coc_th,
+               th_i=args.coi_th, cite_out_weight=args.cite_out_weight, cite_in_weight=args.cite_in_weight):    
     """
     Args:
         name(str): author
         th_a(int): threshold of coA
         th_o(float): threshold of coO
         th_v(int): threshold of coV
+        th_c(int): threshold for citation OUT edges     
+        th_i(int): threshold for citation IN edges   
+        cite_out_weight(float): weight multiplier for outgoing citations
+        cite_in_weight(float): weight multiplier for incoming citations    
     Returns:
         label(list): true label
         ft_tensor(tensor): node feature
@@ -68,7 +73,6 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
     data_path = join(args.save_path, 'graph')
     datapath = join(data_path, args.mode, name)
 
-    # ========== AGGIUNGI QUESTO CHECK ALL'INIZIO ==========
     # Check if graph files exist
     feats_path = join(datapath, 'feats_p.npy')
     adj_path = join(datapath, 'adj_attr.txt')
@@ -107,7 +111,6 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
     for line in temp:
         toks = line.strip().split("\t")
         
-        # ===== MODIFICATO: Ora leggiamo 11 colonne invece di 7 =====
         if len(toks) == 11:
             src, dst = int(toks[0]), int(toks[1])
             val_a = int(toks[2])
@@ -115,10 +118,10 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
             attr_o = float(toks[4])
             val_v = int(toks[5])
             attr_v = float(toks[6])
-            val_cite_out = int(toks[7])      # NUOVO
-            attr_cite_out = float(toks[8])   # NUOVO
-            val_cite_in = int(toks[9])       # NUOVO
-            attr_cite_in = float(toks[10])   # NUOVO
+            val_cite_out = int(toks[7])      
+            attr_cite_out = float(toks[8])   
+            val_cite_in = int(toks[9])       
+            attr_cite_in = float(toks[10])   
         # ===========================================================
         else:
             #print('read adj_attr ERROR!\n')
@@ -154,15 +157,12 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
             else:
                 val_o = 0
 
-            th_c = args.coc_th
-            th_i = args.coi_th
-
             has_relation = (
                 (val_a > th_a) or 
                 (val_o > th_o) or 
                 (val_v > th_v) or 
-                (val_cite_out > th_c) or  # ← Usa threshold!
-                (val_cite_in > th_i)      # ← Usa threshold!
+                (val_cite_out > th_c) or  
+                (val_cite_in > th_i)      
             )
 
             if has_relation:
@@ -170,21 +170,21 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
                 dsts.append(dst)
                 
                 total_weight = (
-                    val_a + 
-                    val_o + 
-                    val_v + 
-                    val_cite_out * args.cite_out_weight +
-                    val_cite_in * args.cite_in_weight
+                    val_a * 2.0 + 
+                    val_o * 1.0 + 
+                    val_v * 1.0 + 
+                    val_cite_out * cite_out_weight +
+                    val_cite_in * cite_in_weight
                 )
                 value.append(total_weight)
                 
-                # Attributi multi-dimensionali (5D ora)
+                # Attributi multi-dimensionali (5D)
                 attr.append([
                     float(val_a), 
                     float(attr_o), 
                     float(attr_v),
-                    float(attr_cite_out),  # NUOVO
-                    float(attr_cite_in)    # NUOVO
+                    float(attr_cite_out),  
+                    float(attr_cite_in)    
                 ])
             # ======================================================
         else:

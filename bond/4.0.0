@@ -1,0 +1,5 @@
+Defaulting to user installation because normal site-packages is not writeable
+Requirement already satisfied: gensim in c:\users\franc\appdata\roaming\python\python311\site-packages (4.3.2)
+Requirement already satisfied: numpy>=1.18.5 in c:\users\franc\appdata\roaming\python\python311\site-packages (from gensim) (1.26.4)
+Requirement already satisfied: scipy>=1.7.0 in c:\users\franc\appdata\roaming\python\python311\site-packages (from gensim) (1.17.0)
+Requirement already satisfied: smart-open>=1.8.1 in c:\users\franc\appdata\roaming\python\python311\site-packages (from gensim) (6.4.0)

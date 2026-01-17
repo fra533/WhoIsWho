@@ -42,7 +42,6 @@ def save_results(names, pubs, results):
         
         result_dict[name] = clusters
     
-    # Salva
     output_dir = 'out'
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'res.json')

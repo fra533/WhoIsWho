@@ -21,14 +21,6 @@ DATA_PATH = BASE_PATH / "dataset" / "data"
 RESULTS_DIR = BASE_PATH / "hyperopt_multimetric_results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-CITATION_CONFIG = {
-    'use_citations': True,
-    'cite_out_weight': (0.5, 2.0),
-    'cite_in_weight': (0.5, 2.0),
-    'cite_out_th': (0.0, 0.5),
-    'cite_in_th': (0.0, 0.5)
-}
-
 # ==================== CONFIGURAZIONE EARLY STOPPING ====================
 EARLY_STOPPING_CONFIG = {
     'patience': 15,
@@ -37,17 +29,6 @@ EARLY_STOPPING_CONFIG = {
     'convergence_window': 10,
     'convergence_threshold': 0.0005
 }
-
-# ==================== PESI METRICHE ====================
-METRIC_WEIGHTS = {
-    'pairwise_f1': 0.35,
-    'k_metric': 0.30,
-    'cluster_f1': 0.15,
-    'splitting_error': 0.10,
-    'lumping_error': 0.10
-}
-
-assert abs(sum(METRIC_WEIGHTS.values()) - 1.0) < 1e-6, "I pesi devono sommare a 1!"
 
 
 class EarlyStoppingCallback:
@@ -76,7 +57,6 @@ class EarlyStoppingCallback:
         
         self.trial_values.append(current_value)
         
-        # Check miglioramento
         improvement = current_value - self.best_value
         
         if improvement > self.min_delta:
@@ -88,7 +68,6 @@ class EarlyStoppingCallback:
             self.trials_without_improvement += 1
             print(f"  ○ No improvement for {self.trials_without_improvement} trials")
         
-        # Check convergenza
         if len(self.trial_values) >= self.convergence_window:
             recent_values = self.trial_values[-self.convergence_window:]
             variance = np.var(recent_values)
@@ -98,7 +77,6 @@ class EarlyStoppingCallback:
                 study.stop()
                 return
         
-        # Check patience
         if self.trials_without_improvement >= self.patience:
             print(f"\n  ⚠ Early stopping! No improvement for {self.patience} trials")
             study.stop()
@@ -137,68 +115,89 @@ class ProgressTracker:
 def objective(trial):
     """
     Funzione obiettivo per Optuna usando PipelineA
+    USA I NOMI CORRETTI DA params.py!
     """
+    # ========== PARAMETRI CON NOMI CORRETTI ==========
     params = {
+        # Clustering
         'db_eps': trial.suggest_float('db_eps', 0.05, 0.3, step=0.01),
         'db_min': trial.suggest_int('db_min', 2, 10),
         'cluster_w': trial.suggest_float('cluster_w', 0.1, 0.9, step=0.1),
+        
+        # Training
         'lr': trial.suggest_float('lr', 1e-5, 1e-3, log=True),
         'l2_coef': trial.suggest_float('l2_coef', 1e-6, 1e-3, log=True),
-        'hidden_dim_0': trial.suggest_categorical('hidden_dim_0', [128, 256, 512]),
-        'hidden_dim_1': trial.suggest_categorical('hidden_dim_1', [128, 256, 512]),
         'compress_ratio': trial.suggest_float('compress_ratio', 0.5, 1.0, step=0.1),
-        'th_a_0': trial.suggest_float('th_a_0', 0.0, 0.5),
-        'th_a_1': trial.suggest_float('th_a_1', 0.5, 1.5),
-        'th_o_0': trial.suggest_float('th_o_0', 0.3, 0.8),
-        'th_o_1': trial.suggest_float('th_o_1', 0.3, 0.8),
-        'th_v_0': trial.suggest_float('th_v_0', 0.5, 2.0),
-        'th_v_1': trial.suggest_float('th_v_1', 1.0, 3.0),
-        'cite_out_weight': trial.suggest_float('cite_out_weight', *CITATION_CONFIG['cite_out_weight'], step=0.1),
-        'cite_in_weight': trial.suggest_float('cite_in_weight', *CITATION_CONFIG['cite_in_weight'], step=0.1),
-        'cite_out_th': trial.suggest_float('cite_out_th', *CITATION_CONFIG['cite_out_th'], step=0.05),
-        'cite_in_th': trial.suggest_float('cite_in_th', *CITATION_CONFIG['cite_in_th'], step=0.05),
-        'epochs': 50
+        'epochs': 50,
+        
+        # Hidden dimensions (come LISTA - params.py li accetta così)
+        'hidden_dim': [
+            trial.suggest_categorical('hidden_dim_0', [128, 256, 512]),
+            trial.suggest_categorical('hidden_dim_1', [128, 256, 512])
+        ],
+        
+        # Co-author thresholds (come LISTA)
+        'coa_th': trial.suggest_int('coa_th', 0, 2),
+        
+        # Co-org thresholds (come LISTA)
+        'coo_th': trial.suggest_float('coo_th', 0.3, 0.9, step=0.05),
+        
+        # Co-venue thresholds (come LISTA) 
+        'cov_th': trial.suggest_float('cov_th', 0.5, 3.0, step=0.5),
+        
+        # Citation thresholds (NOMI CORRETTI: coc_th, coi_th)
+        'coc_th': trial.suggest_float('coc_th', 0.0, 0.5, step=0.05),
+        'coi_th': trial.suggest_float('coi_th', 0.0, 0.5, step=0.05),
+        
+        # Citation weights (NOMI CORRETTI: già giusti)
+        'cite_out_weight': trial.suggest_float('cite_out_weight', 0.5, 2.0, step=0.1),
+        'cite_in_weight': trial.suggest_float('cite_in_weight', 0.3, 1.5, step=0.1),
     }
+    # ================================================
 
-    # ========== ENVIRONMENT VARIABLES ==========
+    # Environment variables
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
     env['HYPEROPT_MODE'] = '1'
-    # ===========================================
 
     # Directory trial
     trial_dir = RESULTS_DIR / f"trial_{trial.number:03d}"
     trial_dir.mkdir(parents=True, exist_ok=True)
 
-    # ========== COMANDO PIPELINEA ==========
+    # ========== COSTRUISCI COMANDO CON NOMI CORRETTI ==========
     cmd = [
-        'python', str(PIPELINE_SCRIPT),
+        sys.executable,
+        str(PIPELINE_SCRIPT),
         '--mode', 'train',
         '--db_eps', str(params['db_eps']),
         '--db_min', str(params['db_min']),
         '--cluster_w', str(params['cluster_w']),
         '--lr', str(params['lr']),
         '--l2_coef', str(params['l2_coef']),
-        '--hidden_dim_0', str(params['hidden_dim_0']),
-        '--hidden_dim_1', str(params['hidden_dim_1']),
         '--compress_ratio', str(params['compress_ratio']),
-        '--th_a_0', str(params['th_a_0']),
-        '--th_a_1', str(params['th_a_1']),
-        '--th_o_0', str(params['th_o_0']),
-        '--th_o_1', str(params['th_o_1']),
-        '--th_v_0', str(params['th_v_0']),
-        '--th_v_1', str(params['th_v_1']),
+        '--epochs', str(params['epochs']),
+        
+        # Hidden dim come lista separata da spazi
+        '--hidden_dim', str(params['hidden_dim'][0]), str(params['hidden_dim'][1]),
+        
+        # Thresholds singoli (non liste multiple)
+        '--coa_th', str(params['coa_th']),
+        '--coo_th', str(params['coo_th']),
+        '--cov_th', str(params['cov_th']),
+        
+        # Citation thresholds (NOMI CORRETTI!)
+        '--coc_th', str(params['coc_th']),
+        '--coi_th', str(params['coi_th']),
+        
+        # Citation weights
         '--cite_out_weight', str(params['cite_out_weight']),
         '--cite_in_weight', str(params['cite_in_weight']),
-        '--cite_out_th', str(params['cite_out_th']),
-        '--cite_in_th', str(params['cite_in_th']),
-        '--epochs', str(params['epochs'])
     ]
-    # ========================================
+    # =========================================================
 
     print(f"\nTrial {trial.number} - Starting PipelineA...")
-    print(f"  Mode: train (optimization on training set)")  
     print(f"  Clustering: eps={params['db_eps']}, min={params['db_min']}")
+    print(f"  Citations: out_w={params['cite_out_weight']:.1f}, in_w={params['cite_in_weight']:.1f}")
     
     try:
         result = subprocess.run(
@@ -208,15 +207,21 @@ def objective(trial):
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=7200
+            timeout=7200  # 2 ore
         )
+        
+        # Salva output
+        with open(trial_dir / "stdout.txt", 'w', encoding='utf-8') as f:
+            f.write(result.stdout)
+        with open(trial_dir / "stderr.txt", 'w', encoding='utf-8') as f:
+            f.write(result.stderr)
         
         if result.returncode != 0:
             print(f"  WARNING: PipelineA exited with code {result.returncode}")
-            with open(trial_dir / "error.txt", 'w', encoding='utf-8') as f:
-                f.write(result.stderr)
+            print(f"  Check {trial_dir / 'stderr.txt'} for details")
             return 0.0
         
+        # Leggi risultati
         results_file = BASE_PATH / "evaluation_results" / "evaluation_results.json"
         
         if not results_file.exists():
@@ -226,57 +231,32 @@ def objective(trial):
         with open(results_file, 'r', encoding='utf-8') as f:
             results = json.load(f)
         
+        # Copia risultati
         shutil.copy2(results_file, trial_dir / "results.json")
         
-        # ========== ESTRAI METRICHE CON GESTIONE ERRORI ==========
-        try:
-            if not results:
-                print(f"  ERROR: Results file is empty!")
-                return 0.0
-            
-            composite_score = results.get('composite_score', 0.0)
-            
-            if 'pairwise' not in results:
-                print(f"  ⚠️  WARNING: 'pairwise' not in results!")
-                print(f"  Available keys: {list(results.keys())}")
-                
-                if 'summary' in results:
-                    print(f"  → Trying to extract from 'summary'...")
-                    results = results['summary']
-                    composite_score = results.get('composite_score', 0.0)
-                else:
-                    print(f"  → Results appear to be empty/invalid")
-                    return 0.0
-            
-            pairwise_f1 = results.get('pairwise', {}).get('f1', 0.0)
-            k_metric = results.get('k_metric', {}).get('k', 0.0)
-            cluster_f1 = results.get('cluster', {}).get('f1', 0.0)
-            
-            print(f"\n  Trial {trial.number} completed:")
-            print(f"    Composite Score: {composite_score:.4f}")
-            print(f"    Pairwise F1:     {pairwise_f1:.4f}")
-            print(f"    K-metric:        {k_metric:.4f}")
-            print(f"    Cluster F1:      {cluster_f1:.4f}")
-            
-            if composite_score == 0.0 and pairwise_f1 == 0.0 and k_metric == 0.0:
-                print(f"\n  ⚠️  WARNING: All metrics are 0.0 - evaluation likely failed!")
-                print(f"  Check: evaluation_results/evaluation_results.json")
-            
-        except KeyError as e:
-            print(f"  ERROR: Missing key in results: {e}")
-            print(f"  Available keys: {list(results.keys()) if results else 'None'}")
-            return 0.0
-        except Exception as e:
-            print(f"  ERROR: Failed to extract metrics: {e}")
-            import traceback
-            traceback.print_exc()
-            return 0.0
-        # =========================================================
+        # Estrai composite score
+        composite_score = results.get('composite_score', 0.0)
         
+        # Estrai altre metriche per logging
+        pairwise_f1 = results.get('pairwise', {}).get('f1', 0.0)
+        k_metric = results.get('k_metric', {}).get('k', 0.0)
+        cluster_f1 = results.get('cluster', {}).get('f1', 0.0)
+        
+        print(f"\n  Trial {trial.number} completed:")
+        print(f"    Composite Score: {composite_score:.4f}")
+        print(f"    Pairwise F1:     {pairwise_f1:.4f}")
+        print(f"    K-metric:        {k_metric:.4f}")
+        print(f"    Cluster F1:      {cluster_f1:.4f}")
+        
+        # Salva info trial
         trial_data = {
             "trial": trial.number,
             "composite_score": composite_score,
-            "metrics": results,
+            "metrics": {
+                "pairwise_f1": pairwise_f1,
+                "k_metric": k_metric,
+                "cluster_f1": cluster_f1
+            },
             "params": params,
             "timestamp": datetime.now().isoformat()
         }
@@ -287,48 +267,13 @@ def objective(trial):
         return composite_score
     
     except subprocess.TimeoutExpired:
-        print(f"  ERROR: Trial {trial.number} timed out")
+        print(f"  ERROR: Trial {trial.number} timed out (>2 hours)")
         return 0.0
     except Exception as e:
         print(f"  ERROR: Trial {trial.number} failed: {e}")
         import traceback
         traceback.print_exc()
         return 0.0
-
-
-def run_preprocessing_once():
-    """
-    Esegue preprocessing UNA VOLTA all'inizio
-    """
-    print("\n" + "="*70)
-    print("PREPROCESSING STEP (ONE TIME ONLY)")
-    print("="*70)
-    print("\nRunning full pipeline once to generate preprocessing...")
-    
-    cmd = [
-        'python', str(PIPELINE_SCRIPT),
-        '--mode', 'train'
-    ]
-    
-    env = os.environ.copy()
-    
-    try:
-        result = subprocess.run(
-            cmd,
-            env=env,
-            timeout=3600  
-        )
-        
-        if result.returncode == 0:
-            print("\n✅ Preprocessing completed successfully!")
-            return True
-        else:
-            print("\n❌ Preprocessing failed!")
-            return False
-            
-    except Exception as e:
-        print(f"\n❌ Preprocessing error: {e}")
-        return False
 
 
 def optimize_hyperparameters():
@@ -341,22 +286,45 @@ def optimize_hyperparameters():
     print("\n[CONFIGURATION]")
     print(f"  Pipeline: {PIPELINE_SCRIPT}")
     print(f"  Optimizing: Composite score")
-    print(f"  Metric weights:")
-    for metric, weight in METRIC_WEIGHTS.items():
-        print(f"    {metric:20s}: {weight:.2f}")
     
     print("\n" + "="*70)
     print("PREPROCESSING CHECK")
     print("="*70)
-    do_preprocessing = input("\nRun preprocessing now? (y/N): ").strip().lower()
     
-    if do_preprocessing == 'y':
-        if not run_preprocessing_once():
+    # Check se preprocessing è già disponibile
+    preprocessing_done = (
+        (DATA_PATH / 'graph' / 'train').exists() and
+        any((DATA_PATH / 'graph' / 'train').iterdir())
+    )
+    
+    if preprocessing_done:
+        print("\n✅ Preprocessing appears to be done!")
+        print("   PipelineA will skip preprocessing (HYPEROPT_MODE=1)")
+    else:
+        print("\n⚠️  Preprocessing not found!")
+        do_preprocessing = input("\nRun preprocessing now? (y/N): ").strip().lower()
+        
+        if do_preprocessing == 'y':
+            print("\nRunning preprocessing...")
+            cmd = [sys.executable, str(PIPELINE_SCRIPT), '--mode', 'train']
+            
+            # Rimuovi HYPEROPT_MODE per fare preprocessing
+            env = os.environ.copy()
+            if 'HYPEROPT_MODE' in env:
+                del env['HYPEROPT_MODE']
+            
+            try:
+                result = subprocess.run(cmd, env=env, timeout=3600)
+                if result.returncode != 0:
+                    print("\n❌ Preprocessing failed!")
+                    return
+                print("\n✅ Preprocessing completed!")
+            except Exception as e:
+                print(f"\n❌ Preprocessing error: {e}")
+                return
+        else:
             print("\n❌ Cannot continue without preprocessing!")
             return
-    else:
-        print("\n⚠️  Assuming preprocessing is already done...")
-        print("   PipelineA will skip preprocessing steps (HYPEROPT_MODE=1)")
     
     try:
         n_trials = int(input("\nMax number of trials (default 100): ") or "100")
@@ -370,6 +338,7 @@ def optimize_hyperparameters():
     
     input("\nPress ENTER to start...")
     
+    # Create study
     study = optuna.create_study(
         direction='maximize',
         sampler=TPESampler(seed=42),
@@ -379,6 +348,7 @@ def optimize_hyperparameters():
     progress = ProgressTracker(n_trials)
     early_stopping = EarlyStoppingCallback(**EARLY_STOPPING_CONFIG)
     
+    # Optimize
     study.optimize(
         objective, 
         n_trials=n_trials, 
@@ -386,6 +356,7 @@ def optimize_hyperparameters():
         show_progress_bar=True
     )
     
+    # Results
     print("\n" + "="*70)
     print("OPTIMIZATION COMPLETE")
     print("="*70)
@@ -398,6 +369,7 @@ def optimize_hyperparameters():
     for key, value in best_trial.params.items():
         print(f"  {key}: {value}")
     
+    # Salva best params
     best_params_file = RESULTS_DIR / "best_parameters.json"
     with open(best_params_file, 'w', encoding='utf-8') as f:
         json.dump({

@@ -13,19 +13,23 @@ def set_params():
 
     parser.add_argument('--save_path', type=str, default='dataset/data')
     parser.add_argument('--l2_coef', type=float, default=2.714679239042756e-05)
-    parser.add_argument('--compress_ratio', type=float, default=1)
-    parser.add_argument('--hidden_dim', nargs='+', type=int, default=[256, 512])
+    parser.add_argument('--compress_ratio', type=float, default=0.5)
+    parser.add_argument('--hidden_dim', nargs='+', type=int, default=[512, 256])
+    # Consigliato per SPECTER2:
+    #parser.add_argument('--hidden_dim', nargs='+', type=int, default=[768, 512])
     parser.add_argument('--rel_on', type=str, default='aov')
+    parser.add_argument('--emb_type', type=str, default='w2v', choices=['w2v', 'specter'],
+                        help='Scegli tra word2vec (veloce) o specter (preciso, per paper scientifici)')
     
     parser.add_argument('--cluster_w', type=float, default=0.4)
     parser.add_argument('--prob_v', type=float, default=0.9)
-    parser.add_argument('--coa_th', type=int, default=0)
+    parser.add_argument('--coa_th', type=int, default=2)
     parser.add_argument('--coo_th', type=float, default=0.85)  # ← cambiato a float
-    parser.add_argument('--cov_th', type=float, default=2)
-    parser.add_argument('--coc_th', type=float, default=0.0)  # ← cambiato a float
-    parser.add_argument('--coi_th', type=float, default=0.0)  # ← cambiato a float
+    parser.add_argument('--cov_th', type=float, default=1)
+    parser.add_argument('--coc_th', type=float, default=1)  # ← cambiato a float
+    parser.add_argument('--coi_th', type=float, default=0)  # ← cambiato a float
 
-    parser.add_argument('--db_eps', type=float, default=0.1)
+    parser.add_argument('--db_eps', type=float, default=0.2)
     parser.add_argument('--db_min', type=int, default=3)
     parser.add_argument('--post_match', type=bool, default=False)
 
@@ -39,8 +43,8 @@ def set_params():
     parser.add_argument('--repeat_num', type=int, default=1)
     
     # ✅ AGGIUNTO: citation weights
-    parser.add_argument('--cite_out_weight', type=float, default=1.7)
-    parser.add_argument('--cite_in_weight', type=float, default=0.6)
+    parser.add_argument('--cite_out_weight', type=float, default=0.5)
+    parser.add_argument('--cite_in_weight', type=float, default=0.3)
     parser.add_argument('--use_citations', type=bool, default=True)
     
     args, _ = parser.parse_known_args()
