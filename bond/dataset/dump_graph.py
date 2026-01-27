@@ -17,17 +17,11 @@ args = set_params()
 # ============================================================
 def clean_id(identifier):
     """
-    Rimuove prefissi comuni (doi:, omid:, ecc.) e pulisce la stringa
-    per permettere il confronto tra metadati e citazioni.
+    Normalizza un DOI: lowercase e strip.
     """
     if not identifier:
         return ""
-    identifier = str(identifier).lower().strip()
-    prefixes = ["doi:", "omid:", "openalex:", "pmid:", "https://doi.org/", "http://doi.org/"]
-    for p in prefixes:
-        if identifier.startswith(p):
-            identifier = identifier[len(p):]
-    return identifier
+    return str(identifier).lower().strip()
 
 def gen_relations(name, mode, target):
     dirpath = join(args.save_path, 'relations', mode, name)
@@ -72,8 +66,9 @@ def save_label_pubs(mode, name, raw_pubs, save_path):
 
 def save_emb(mode, name, pubs, save_path):
     emb_path = join(args.save_path, 'paper_emb', mode, name, 'ptext_emb.pkl')
-    tcp_path = join(args.save_path, 'paper_emb', mode, name, 'tcp.pkl')
-    ft_dim = 256
+    # Determina la dimensione in base all'embedding scelto
+    ft_dim = 768 if args.emb_type == 'specter' else 256
+    
     ptext_emb = {}
     if os.path.exists(emb_path):
         with open(emb_path, 'rb') as f:
@@ -82,8 +77,10 @@ def save_emb(mode, name, pubs, save_path):
     feats_dict = {}
     for idx, pid in enumerate(pubs):
         if pid in ptext_emb:
+            # Assicuriamoci che il vettore caricato sia convertito correttamente
             feats_dict[idx] = torch.tensor(ptext_emb[pid], dtype=torch.float32)
         else:
+            # Crea un vettore di zeri della dimensione corretta (768 per SPECTER)
             feats_dict[idx] = torch.zeros(ft_dim, dtype=torch.float32)
     
     np.save(join(save_path, 'feats_p.npy'), feats_dict)
@@ -93,16 +90,13 @@ def save_emb(mode, name, pubs, save_path):
 # ============================================================
 def build_id_resolver(pubs_dict):
     """
-    Crea una mappa che associa ogni DOI o OMID pulito all'ID interno (pid).
+    Crea una mappa DOI (lowercase) -> pid
     """
     resolver = {}
     for pid, pub in pubs_dict.items():
-        # Mappa il DOI pulito
         if pub.get('doi'):
-            resolver[clean_id(pub['doi'])] = pid
-        # Mappa l'OMID pulito
-        if pub.get('omid'):
-            resolver[clean_id(pub['omid'])] = pid
+            doi_clean = pub['doi'].lower().strip()
+            resolver[doi_clean] = pid
     return resolver
 
 # ============================================================
@@ -137,13 +131,12 @@ def save_graph(name, pubs, save_path, mode):
             p1_idx = paper_dict[p1]
             
             # --- TRADUZIONE RIFERIMENTI DI P1 ---
-            # Convertiamo i DOI/OMID citati da p1 in ID interni presenti nel set
+            # I DOI sono già puliti (lowercase) dal preprocessing
             p1_internal_references = set()
             if p1 in rels['cout']:
-                for raw_id in rels['cout'][p1]:
-                    # Puliamo l'ID della citazione (rimuove "doi:", ecc.)
-                    target_id = clean_id(raw_id)
-                    internal_id = id_resolver.get(target_id)
+                for doi in rels['cout'][p1]:
+                    # Il DOI è già lowercase dal dump_relation.py
+                    internal_id = id_resolver.get(doi)
                     if internal_id:
                         p1_internal_references.add(internal_id)
 
@@ -159,24 +152,34 @@ def save_graph(name, pubs, save_path, mode):
                         return cnt, jac
                     return 0, 0.0
 
-                co_a, _ = calc_rel('auth')
+                # --- RECUPERO RELAZIONI ---
+                co_a, jac_a = calc_rel('auth')  
                 co_o, jac_o = calc_rel('org')
                 co_v, jac_v = calc_rel('ven')
 
                 # --- CITAZIONE DIRETTA ---
-                # Se l'ID di p2 è tra i riferimenti risolti di p1
                 direct_cite = 1 if p2 in p1_internal_references else 0
                 
                 # --- CO-CITAZIONE / BIBLIOGRAPHIC COUPLING ---
                 co_cout, jac_cout = calc_rel('cout')
                 co_cin, jac_cin = calc_rel('cin')
 
-                # Valori finali per colonne 8-9 (Cite Out)
+                # Valori per colonne 8-9 (Cite Out)
                 val_cite_out = co_cout + direct_cite
                 attr_cite_out = max(jac_cout, 1.0 if direct_cite else 0.0)
 
-                # Scrittura 11 colonne
-                if (co_a + co_o + co_v + val_cite_out + co_cin) > 0:
+                # 1. Co-autori: richiediamo almeno 3 co-autori in comune. 
+                # Con 2 omonimi c'è ancora rischio, con 3 è quasi impossibile sbagliare.
+                is_safe_coauthor = (co_a >= 3)
+                
+                # 2. Citazione Diretta: resta il segnale più forte.
+                is_direct_citation = (direct_cite > 0)
+                
+                # 3. Accoppiamento Bibliografico: almeno 3 citazioni in uscita comuni.
+                is_strong_coupling = (co_cout >= 3)
+
+                # Eliminiamo del tutto Org e Venue: creano troppa "colla" tra omonimi.
+                if is_safe_coauthor or is_direct_citation or is_strong_coupling:
                     f.write(f'{p1_idx}\t{p2_idx}\t'
                             f'{co_a}\t'
                             f'{co_o}\t{jac_o:.4f}\t'
