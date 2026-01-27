@@ -33,26 +33,22 @@ class BONDTrainer:
         pass
 
     def onehot_encoder(self, label_list):
-        """
-        Transform label list to one-hot matrix.
-        Arg:
-            label_list: e.g. [0, 0, 1]
-        Return:
-            onehot_mat: e.g. [[1, 0], [1, 0], [0, 1]]
-        """
         if isinstance(label_list, np.ndarray):
             labels_arr = label_list
         else:
-            try:
-                labels_arr = np.array(label_list.cpu().detach().numpy())
-            except:
-                labels_arr = np.array(label_list)
+            labels_arr = np.array(label_list.cpu().detach().numpy())
         
         num_classes = max(labels_arr) + 1
-        onehot_mat = np.zeros((len(labels_arr), num_classes+1))
+        # Se max è -1 (solo outliers), num_classes diventa 0. Gestiamo il caso:
+        num_classes = max(0, num_classes)
+        
+        # Creiamo una matrice dove gli outlier (-1) hanno una riga di soli zeri
+        # così non influenzano positivamente la similarità tra loro
+        onehot_mat = np.zeros((len(labels_arr), num_classes))
 
         for i in range(len(labels_arr)):
-            onehot_mat[i, labels_arr[i]] = 1
+            if labels_arr[i] != -1:
+                onehot_mat[i, labels_arr[i]] = 1
 
         return onehot_mat
     
@@ -160,16 +156,25 @@ class BONDTrainer:
 
     def labels_to_clusters(self, pred, paper_ids):
         """
-        Versione pulita: assume che i dati siano già sincronizzati nel fit()
+        Versione corretta: ogni outlier (-1) diventa un cluster separato (singleton).
         """
         from collections import defaultdict
         cluster_dict = defaultdict(list)
         
-        # Ora len(pred) sarà SEMPRE uguale a len(paper_ids)
+        # Contatore per creare ID univoci per gli outlier
+        outlier_count = 0
+        
         for idx, label in enumerate(pred):
-            # Trasformiamo il tensor in int se necessario
             l_val = label.item() if hasattr(label, 'item') else label
-            cluster_dict[l_val].append(paper_ids[idx])
+            
+            if l_val == -1:
+                # Invece di usare -1 come chiave comune, creiamo una chiave univoca
+                # Questo garantisce che il paper finisca in un cluster da solo (Precision!)
+                unique_key = f"outlier_{outlier_count}"
+                cluster_dict[unique_key].append(paper_ids[idx])
+                outlier_count += 1
+            else:
+                cluster_dict[l_val].append(paper_ids[idx])
         
         return list(cluster_dict.values())
 
