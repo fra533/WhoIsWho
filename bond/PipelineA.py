@@ -43,6 +43,18 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+# Controlliamo se siamo in modalità DEBUG tramite una variabile d'ambiente
+if os.getenv("DEBUG_MODE") != "1": 
+    print("🔄 Clearing cached modules...")
+    modules_to_clear = [m for m in list(sys.modules.keys()) 
+                       if 'bond' in m or 'params' in m or 'training' in m or 'dataset' in m]
+    if modules_to_clear:
+        for module in modules_to_clear:
+            del sys.modules[module]
+    print("   ✅ Modules cleared")
+else:
+    print("   🚀 Debug mode detected: keeping patched modules")
+
 from training.autotrain_bond import BONDTrainer
 from training.autotrain_bond_ensemble import ESBTrainer
 from dataset.preprocess_SND import dump_name_pubs, dump_features_relations_to_file, build_graph
@@ -520,6 +532,38 @@ class BondPipeline:
             model_type = self.config['model_type']
             print(f"\nTraining model: {model_type}")
             print(f"Mode: {self.mode}")
+
+            # ============================================================
+            # ⚡ INIZIO LOGICA BYPASS GNN (ABLATION STUDY) ⚡
+            # ============================================================
+            # Verifica la variabile d'ambiente settata da run_experiments.py
+            if os.getenv("NO_GNN") == "1":
+                print("\n⚠️  GNN BYPASS ACTIVATED (Ablation Mode) ⚠️")
+                print("[PATCH] Sto sostituendo la GNN con una funzione identità...")
+                
+                # Importiamo il modulo dove è definita la GNN
+                import training.autotrain_bond as ab
+
+                # Controlliamo se la classe esiste nel modulo
+                if hasattr(ab, 'ATTGNN'):
+                    ModelClass = ab.ATTGNN
+                    
+                    # Definiamo la funzione "fake" che sostituisce la rete neurale.
+                    # Restituisce (x, x) perché il trainer si aspetta (logits, embedding).
+                    # Restituendo x (le feature originali), simuliamo l'assenza della GNN.
+                    def identity_forward_tuple(self, x, *args, **kwargs):
+                        return x, x
+
+                    # Sovrascriviamo il metodo forward della CLASSE
+                    ModelClass.forward = identity_forward_tuple
+                    print(f"✅ [PATCH] Metodo forward di {ModelClass.__name__} sostituito con successo.\n")
+                else:
+                    print("❌ [ERROR] Impossibile trovare la classe ATTGNN in autotrain_bond per applicare la patch.")
+            else:
+                print("✅ GNN Active: Using standard Full Topology Model")
+            # ============================================================
+            # ⚡ FINE LOGICA BYPASS GNN ⚡
+            # ============================================================
             
             if model_type == 'bond':
                 trainer = BONDTrainer()
