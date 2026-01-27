@@ -233,11 +233,9 @@ def dump_features_relations_to_file():
                 if "outgoing_citations" in pub and pub["outgoing_citations"]:
                     citations = pub["outgoing_citations"]
                     
-                    # Gestisci formato: lista di stringhe con ID multipli separati da spazi
                     all_refs = []
                     if isinstance(citations, list):
                         for citation_str in citations:
-                            # Ogni elemento è una stringa con ID separati da spazi
                             if isinstance(citation_str, str):
                                 all_refs.extend(citation_str.split())
                             else:
@@ -245,21 +243,19 @@ def dump_features_relations_to_file():
                     elif isinstance(citations, str):
                         all_refs = citations.split()
                     
-                    # Scrivi ogni ID di riferimento
+                    # Scrivi SOLO i DOI (iniziano con "10.")
                     for ref_id in all_refs:
-                        ref_id = ref_id.strip()
-                        if ref_id:
+                        ref_id = ref_id.strip().lower()
+                        if ref_id and ref_id.startswith("10."):
                             cite_out_file.write(f"{pid}\t{ref_id}\n")
-                
-                # Incoming citations
+
+                # Incoming citations - SOLO DOI
                 if "incoming_citations" in pub and pub["incoming_citations"]:
                     citations = pub["incoming_citations"]
                     
-                    # Gestisci formato: lista di stringhe con ID multipli separati da spazi
                     all_citing = []
                     if isinstance(citations, list):
                         for citation_str in citations:
-                            # Ogni elemento è una stringa con ID separati da spazi
                             if isinstance(citation_str, str):
                                 all_citing.extend(citation_str.split())
                             else:
@@ -267,10 +263,10 @@ def dump_features_relations_to_file():
                     elif isinstance(citations, str):
                         all_citing = citations.split()
                     
-                    # Scrivi ogni ID citante
+                    # Scrivi SOLO i DOI (iniziano con "10.")
                     for citing_id in all_citing:
-                        citing_id = citing_id.strip()
-                        if citing_id:
+                        citing_id = citing_id.strip().lower()
+                        if citing_id and citing_id.startswith("10."):
                             cite_in_file.write(f"{pid}\t{citing_id}\n")
                 # =================================================
 
