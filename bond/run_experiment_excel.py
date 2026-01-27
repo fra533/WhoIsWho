@@ -84,7 +84,7 @@ def save_excel(data, filename):
     
     # Colonne Prioritarie
     priority_cols = [
-        "Experiment_Name", "Status", "GNN_Active", "Emb_Type", "Mode", "Composite_Score",
+        "Experiment_ID","Experiment_Name", "Status", "GNN_Active", "Emb_Type", "Mode", "Composite_Score",
         "Pairwise_F1", "K_Metric_K", "B3_F1", "Cluster_F1",
         "Splitting_Error", "Lumping_Error",
         "Pairwise_Prec", "Pairwise_Rec",
@@ -138,6 +138,7 @@ def run_session():
     # 🧪 C2: SPECTER + WhoIsWho + CIT + GNN
     # ===========================================================================
     {
+        "id": "",  # <--- AGGIUNGI QUESTA RIGA
         "suffix": "WHOISWHO_CIT_TRAIN_GNN",
         "mode": "train",
         "no_gnn": "0",
@@ -259,10 +260,11 @@ def run_session():
 
     # 5. Ciclo Esperimenti
     for idx, exp_data in enumerate(experiments_template):
+        exp_id = exp_data.get("id", "N/A")
         exp_name = f"{selected_emb.upper()}_{exp_data['suffix']}"
         
         print("\n" + "="*80)
-        print(f"🧪 ESECUZIONE {idx+1}/{len(experiments_template)}: {exp_name}")
+        print(f"[{exp_id}]🧪 ESECUZIONE {idx+1}/{len(experiments_template)}: {exp_name}")
         print("="*80)
 
         # Costruisci Configurazione Completa (per il salvataggio)
@@ -271,6 +273,8 @@ def run_session():
         full_config.update(exp_data['params'])
         full_config['mode'] = exp_data['mode']
         full_config['GNN_Active'] = "NO" if exp_data["no_gnn"] == "1" else "YES"
+
+        full_config['Experiment_ID'] = exp_id
         
         # Prepara Environment
         env = os.environ.copy()
@@ -348,8 +352,8 @@ def run_session():
             status = "CRASHED"
             duration = time.time() - start_time
 
-        # Salva Riga
         row = {
+            "Experiment_ID": exp_id,  
             "Experiment_Name": exp_name,
             "Status": status,
             "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
