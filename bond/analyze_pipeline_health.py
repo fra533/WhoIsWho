@@ -15,8 +15,13 @@ args = set_params()
 
 
 def load_pkl(path):
-    with open(path, 'rb') as f:
-        return pickle.load(f)
+    """Carica file pickle con gestione errori"""
+    try:
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    except (ModuleNotFoundError, ImportError) as e:
+        # Gestisce problemi di versione NumPy
+        return None
 
 
 def analyze_pipeline_health(mode='valid'):
@@ -34,39 +39,59 @@ def analyze_pipeline_health(mode='valid'):
     print("\n" + "="*70)
     print("📁 FILE EXISTENCE CHECK")
     print("="*70)
-    
+
+    # Train ha struttura diversa: src/train/ invece di src/sna-train/
+    if mode == 'train':
+        gt_path = base_path / 'src' / 'train' / 'train_author.json'
+        pub_path = base_path / 'src' / 'train' / 'train_pub.json'
+        raw_path = base_path / 'src' / 'train' / 'train_raw.json'
+    else:
+        gt_path = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_ground_truth.json'
+        pub_path = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_pub.json'
+        raw_path = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_raw.json'
+
     checks = {
-        'Ground Truth': base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_ground_truth.json',
-        'Publications': base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_pub.json',
-        'Raw Pubs': base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_raw.json',
+        'Ground Truth': gt_path,
+        'Publications': pub_path,
+        'Raw Pubs': raw_path,
         'W2V Model': base_path / 'w2v_model' / 'w2v_256.model',
         'Names Pub Dir': base_path / 'names_pub' / mode,
         'Relations Dir': base_path / 'relations' / mode,
         'Graph Dir': base_path / 'graph' / mode,
         'Paper Emb Dir': base_path / 'paper_emb' / mode
     }
-    
+
     missing_critical = []
-    
+
     for name, path in checks.items():
         exists = path.exists()
         symbol = "✅" if exists else "❌"
         print(f"  {symbol} {name:20} {path}")
         
-        if not exists and name in ['Ground Truth', 'W2V Model', 'Paper Emb Dir', 'Graph Dir']:
+        # Ground Truth è opzionale per l'analisi
+        critical_components = ['W2V Model', 'Paper Emb Dir', 'Graph Dir']
+        
+        if not exists and name in critical_components:
             missing_critical.append(name)
-    
+
     if missing_critical:
         print(f"\n  ⚠️  Missing critical components: {', '.join(missing_critical)}")
         print(f"     Pipeline cannot run without these!")
         return False
-    
+        
     # ===== 2. GROUND TRUTH STATS =====
     print("\n" + "="*70)
     print("📊 GROUND TRUTH STATISTICS")
     print("="*70)
     
-    gt_file = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_ground_truth.json'
+    gt = None  # Salva per dopo
+    
+    # Ground Truth ha nome diverso per train
+    if mode == 'train':
+        gt_file = base_path / 'src' / 'train' / 'train_author.json'
+    else:
+        gt_file = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_ground_truth.json'
+    
     if gt_file.exists():
         with open(gt_file, encoding='utf-8') as f:
             gt = json.load(f)
@@ -76,6 +101,7 @@ def analyze_pipeline_health(mode='valid'):
         papers_per_cluster = []
         clusters_per_author = []
         
+        # Formato identico per train/valid/test
         for author_name, author_clusters in gt.items():
             n_clusters = len(author_clusters)
             clusters_per_author.append(n_clusters)
@@ -91,8 +117,21 @@ def analyze_pipeline_health(mode='valid'):
         print(f"  Total clusters: {total_clusters}")
         print(f"  Avg papers per cluster: {np.mean(papers_per_cluster):.1f}")
         print(f"  Avg clusters per author: {np.mean(clusters_per_author):.1f}")
-        print(f"  Papers per author: min={min([sum(len(p) for p in a.values()) for a in gt.values()])}, "
-              f"max={max([sum(len(p) for p in a.values()) for a in gt.values()])}")
+        
+        # Statistiche dettagliate
+        papers_per_author = [sum(len(p) for p in a.values()) for a in gt.values()]
+        print(f"  Papers per author: min={min(papers_per_author)}, "
+              f"max={max(papers_per_author)}, "
+              f"mean={np.mean(papers_per_author):.1f}")
+        
+        print(f"  Clusters per author: min={min(clusters_per_author)}, "
+              f"max={max(clusters_per_author)}, "
+              f"mean={np.mean(clusters_per_author):.1f}")
+    else:
+        print(f"  ⚠️  Ground truth file not found: {gt_file}")
+        if mode == 'train':
+            print(f"     Expected: train_author.json in src/train/")
+        print(f"  Analysis will continue without GT filtering")
     
     # ===== 3. WORD2VEC EMBEDDINGS =====
     print("\n" + "="*70)
@@ -100,11 +139,27 @@ def analyze_pipeline_health(mode='valid'):
     print("="*70)
     
     paper_emb_dir = base_path / 'paper_emb' / mode
+    similarity_means = []  # Inizializza qui per usarlo dopo
+    
     if paper_emb_dir.exists():
-        authors = list(paper_emb_dir.iterdir())[:5]  # Sample 5
+        # Sample più autori per train (è più grande)
+        sample_size = 10 if mode == 'train' else 5
+        all_emb_authors = list(paper_emb_dir.iterdir())
+        
+        # Se c'è GT, campiona solo da autori GT
+        if gt is not None:
+            gt_names = set(gt.keys())
+            emb_authors_filtered = [a for a in all_emb_authors if a.name in gt_names]
+            if emb_authors_filtered:
+                authors = emb_authors_filtered[:sample_size]
+            else:
+                authors = all_emb_authors[:sample_size]
+        else:
+            authors = all_emb_authors[:sample_size]
         
         empty_counts = []
-        similarity_means = []
+        
+        print(f"  Sampling {len(authors)} authors from {len(all_emb_authors)} total...")
         
         for author_dir in authors:
             emb_file = author_dir / 'ptext_emb.pkl'
@@ -113,6 +168,10 @@ def analyze_pipeline_health(mode='valid'):
             if emb_file.exists() and tcp_file.exists():
                 ptext_emb = load_pkl(emb_file)
                 tcp = load_pkl(tcp_file)
+                
+                if ptext_emb is None or tcp is None:
+                    print(f"  ⚠️  Could not load embeddings for {author_dir.name} (NumPy version issue)")
+                    continue
                 
                 if len(ptext_emb) > 1:
                     emb_matrix = np.array(list(ptext_emb.values()))
@@ -123,6 +182,7 @@ def analyze_pipeline_health(mode='valid'):
                     similarity_means.append(sims.mean())
         
         if empty_counts:
+            print(f"\n  Successfully analyzed {len(empty_counts)} authors")
             print(f"  Avg empty embeddings per author: {np.mean(empty_counts):.1f}")
             print(f"  Avg embedding similarity: {np.mean(similarity_means):.4f}")
             print(f"  Similarity std: {np.std(similarity_means):.4f}")
@@ -133,6 +193,8 @@ def analyze_pipeline_health(mode='valid'):
             elif np.mean(similarity_means) > 0.7:
                 print(f"  ⚠️  WARNING: Very high similarity ({np.mean(similarity_means):.4f})")
                 print(f"     Embeddings may not discriminate well!")
+        else:
+            print(f"  ⚠️  Could not analyze any embeddings (all failed to load)")
         
         print(f"\n  For detailed W2V analysis, run:")
         print(f"    python analyze_w2v_embeddings.py --mode {mode} --full")
@@ -143,38 +205,34 @@ def analyze_pipeline_health(mode='valid'):
     print("="*70)
 
     graph_dir = base_path / 'graph' / mode
+    node_counts = []  # Inizializza qui
+    edge_counts = []  # Inizializza qui
+    empty_graphs = 0  # Inizializza qui
+    
     if graph_dir.exists():
         all_authors = list(graph_dir.iterdir())
         
-        # ===== FILTRA SOLO AUTORI IN GROUND TRUTH =====
+        # ===== FILTRA SOLO AUTORI IN GROUND TRUTH (se disponibile) =====
         authors_to_analyze = all_authors  # Default: tutti
         
-        if mode in ['valid', 'test']:
-            gt_file = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_ground_truth.json'
-            if gt_file.exists():
-                with open(gt_file, encoding='utf-8') as f:
-                    gt = json.load(f)
-                gt_names = set(gt.keys())
-                
-                # Filtra solo autori in GT
-                authors_to_analyze = [a for a in all_authors if a.name in gt_names]
-                
-                print(f"  Total authors in graph dir: {len(all_authors)}")
-                print(f"  Authors in ground truth: {len(gt_names)}")
-                print(f"  Analyzing (filtered to GT): {len(authors_to_analyze)}")
-                
-                if len(authors_to_analyze) < len(gt_names):
-                    missing = len(gt_names) - len(authors_to_analyze)
-                    print(f"  ⚠️  {missing} GT authors missing from graphs!")
-            else:
-                print(f"  No ground truth found - analyzing all {len(all_authors)} authors")
+        if gt is not None:
+            gt_names = set(gt.keys())
+            
+            # Filtra solo autori in GT
+            authors_to_analyze = [a for a in all_authors if a.name in gt_names]
+            
+            print(f"  Total authors in graph dir: {len(all_authors)}")
+            print(f"  Authors in ground truth: {len(gt_names)}")
+            print(f"  Analyzing (filtered to GT): {len(authors_to_analyze)}")
+            
+            if len(authors_to_analyze) < len(gt_names):
+                missing = len(gt_names) - len(authors_to_analyze)
+                print(f"  ⚠️  {missing} GT authors missing from graphs!")
         else:
-            print(f"  Analyzing all {len(authors_to_analyze)} authors (train mode)")
+            print(f"  No ground truth available")
+            print(f"  Analyzing all {len(authors_to_analyze)} authors ({mode} mode)")
         # ==============================================
         
-        node_counts = []
-        edge_counts = []
-        empty_graphs = 0
         citation_coverage = {'out': 0, 'in': 0, 'total': 0}
         
         print(f"  Processing {len(authors_to_analyze)} authors...")
@@ -246,11 +304,13 @@ def analyze_pipeline_health(mode='valid'):
     
     issues_found = False
     
-    if empty_graphs / len(authors) > 0.5:
-        print("  ⚠️  >50% empty graphs")
-        print("     → Many authors have no relational connections")
-        print("     → Consider lowering graph construction thresholds")
-        issues_found = True
+    # Fix: usa authors_to_analyze se definito
+    if 'authors_to_analyze' in locals() and len(authors_to_analyze) > 0:
+        if empty_graphs / len(authors_to_analyze) > 0.5:
+            print("  ⚠️  >50% empty graphs")
+            print("     → Many authors have no relational connections")
+            print("     → Consider lowering graph construction thresholds")
+            issues_found = True
     
     if similarity_means and np.mean(similarity_means) < 0.3:
         print("  ⚠️  Very low W2V similarity (<0.3)")
