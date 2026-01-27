@@ -15,27 +15,15 @@ def load_data(rfname):
     with open(rfname, 'rb') as rf:
         return pickle.load(rf)
 
-
 def dump_data(obj, wfname):
     with open(wfname, 'wb') as wf:
         pickle.dump(obj, wf)
        
-        
 def load_json(rfname):
     with codecs.open(rfname, 'r', encoding='utf-8') as rf:
         return json.load(rf)
 
-
 def load_dataset(mode):
-    """
-    Load dataset by mode.
-
-    Args:
-        mode.
-    Returns:
-        names(list):[guanhua_du, ...]
-        pubs(dict): {author:[...], title: xxx, ...}
-    """
     if mode == "train":
         data_path = join(args.save_path, "src", "train", "train_author.json")
     elif mode == "valid":
@@ -50,35 +38,22 @@ def load_dataset(mode):
     
     return names, pubs
 
-
-def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
+def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th, 
+               th_c=args.coc_th, th_i=args.coi_th, 
+               cite_out_weight=args.cite_out_weight, cite_in_weight=args.cite_in_weight):    
     """
-    Args:
-        name(str): author
-        th_a(int): threshold of coA
-        th_o(float): threshold of coO
-        th_v(int): threshold of coV
-    Returns:
-        label(list): true label
-        ft_tensor(tensor): node feature
-        data(Pyg Graph Data): graph
-        
-        Returns (None, None, None) if graph files are missing
+    Load graph with proper threshold filtering.
     """
     data_path = join(args.save_path, 'graph')
     datapath = join(data_path, args.mode, name)
 
-    # ========== AGGIUNGI QUESTO CHECK ALL'INIZIO ==========
     # Check if graph files exist
     feats_path = join(datapath, 'feats_p.npy')
     adj_path = join(datapath, 'adj_attr.txt')
     
     if not os.path.exists(feats_path) or not os.path.exists(adj_path):
         print(f"⚠️  WARNING: Missing graph files for {name}")
-        print(f"    feats_p.npy exists: {os.path.exists(feats_path)}")
-        print(f"    adj_attr.txt exists: {os.path.exists(adj_path)}")
         return None, None, None
-    # ======================================================
 
     # Load label
     if args.mode == "train":
@@ -107,7 +82,6 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
     for line in temp:
         toks = line.strip().split("\t")
         
-        # ===== MODIFICATO: Ora leggiamo 11 colonne invece di 7 =====
         if len(toks) == 11:
             src, dst = int(toks[0]), int(toks[1])
             val_a = int(toks[2])
@@ -115,13 +89,11 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
             attr_o = float(toks[4])
             val_v = int(toks[5])
             attr_v = float(toks[6])
-            val_cite_out = int(toks[7])      # NUOVO
-            attr_cite_out = float(toks[8])   # NUOVO
-            val_cite_in = int(toks[9])       # NUOVO
-            attr_cite_in = float(toks[10])   # NUOVO
-        # ===========================================================
+            val_cite_out = int(toks[7])      
+            attr_cite_out = float(toks[8])   
+            val_cite_in = int(toks[9])       
+            attr_cite_in = float(toks[10])   
         else:
-            #print('read adj_attr ERROR!\n')
             continue
 
         if args.rel_on == 'a':
@@ -130,63 +102,65 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
                 dsts.append(dst)
                 value.append(val_a)
                 attr.append(val_a)
+                
         elif args.rel_on == 'o':
             if val_o > th_o:
                 srcs.append(src)
                 dsts.append(dst)
                 value.append(val_o)
                 attr.append(val_o)
+                
         elif args.rel_on == 'v':
             if val_v > th_v:
                 srcs.append(src)
                 dsts.append(dst)
                 value.append(val_v)
-                attr.append(val_v)  
+                attr.append(val_v)
+                
         elif args.rel_on == 'aov':
-            prob_v = random.random()
-            if (prob_v >= args.prob_v):
-                val_v = val_v
-            else:
-                val_v = 0
-            
-            if attr_o >= args.coo_th:
-                val_o = val_o
-            else:
-                val_o = 0
-
-            th_c = args.coc_th
-            th_i = args.coi_th
-
+            # ========== THRESHOLD FILTERING ==========
+            # Verifichiamo prima le relazioni base (Autori, Org, Venue)
             has_relation = (
                 (val_a > th_a) or 
-                (val_o > th_o) or 
-                (val_v > th_v) or 
-                (val_cite_out > th_c) or  # ← Usa threshold!
-                (val_cite_in > th_i)      # ← Usa threshold!
+                (val_o > th_o and attr_o >= args.coo_th) or
+                (val_v > th_v)
             )
+            
+            # AGGIUNTA: Consideriamo le citazioni nel filtro archi SOLO se abilitate
+            if args.use_citations:
+                has_relation = has_relation or (val_cite_out > th_c) or (val_cite_in > th_i)
 
             if has_relation:
-                srcs.append(src)
-                dsts.append(dst)
+                # Calcola pesi base
+                weight_a = (val_a * 2.0) if val_a > th_a else 0.0
+                weight_o = (val_o * 1.0) if (val_o > th_o and attr_o >= args.coo_th) else 0.0
+                weight_v = (val_v * 1.0) if val_v > th_v else 0.0
                 
-                total_weight = (
-                    val_a + 
-                    val_o + 
-                    val_v + 
-                    val_cite_out * args.cite_out_weight +
-                    val_cite_in * args.cite_in_weight
-                )
-                value.append(total_weight)
+                # AGGIUNTA: Calcola pesi citazioni SOLO se abilitate
+                weight_cite_out = 0.0
+                weight_cite_in = 0.0
+                if args.use_citations:
+                    if val_cite_out > th_c: weight_cite_out = val_cite_out * cite_out_weight
+                    if val_cite_in > th_i: weight_cite_in = val_cite_in * cite_in_weight
                 
-                # Attributi multi-dimensionali (5D ora)
-                attr.append([
-                    float(val_a), 
-                    float(attr_o), 
-                    float(attr_v),
-                    float(attr_cite_out),  # NUOVO
-                    float(attr_cite_in)    # NUOVO
-                ])
-            # ======================================================
+                total_weight = weight_a + weight_o + weight_v + weight_cite_out + weight_cite_in
+                
+                # Append SOLO se il peso finale è significativo
+                if total_weight > 0:
+                    srcs.append(src)
+                    dsts.append(dst)
+                    value.append(total_weight)
+                    
+                    # Le feature degli archi restano a 5D per coerenza del modello GNN,
+                    # ma i valori citazionali saranno 0.0 se disabilitati.
+                    attr.append([
+                        float(val_a), 
+                        float(attr_o), 
+                        float(attr_v),
+                        float(attr_cite_out) if args.use_citations else 0.0,  
+                        float(attr_cite_in) if args.use_citations else 0.0    
+                    ])
+                    
         else:
             print('wrong relation set\n')
             break
@@ -194,10 +168,15 @@ def load_graph(name, th_a=args.coa_th, th_o=args.coo_th, th_v=args.cov_th):
     temp.clear()
 
     # Build graph
-    edge_index = torch.cat([torch.tensor(srcs).unsqueeze(0), torch.tensor(dsts).unsqueeze(0)], dim=0)
-    edge_index = edge_index.long() 
-    edge_attr = torch.tensor(attr, dtype=torch.float32)
-    edge_weight = torch.tensor(value, dtype=torch.float32)
-    data = Data(edge_index=edge_index, edge_attr=edge_attr, edge_weight=edge_weight)
+    if len(srcs) > 0:
+        edge_index = torch.cat([torch.tensor(srcs).unsqueeze(0), torch.tensor(dsts).unsqueeze(0)], dim=0)
+        edge_index = edge_index.long() 
+        edge_attr = torch.tensor(attr, dtype=torch.float32)
+        edge_weight = torch.tensor(value, dtype=torch.float32)
+        data = Data(edge_index=edge_index, edge_attr=edge_attr, edge_weight=edge_weight)
+    else:
+        data = Data(edge_index=torch.empty((2, 0), dtype=torch.long),
+                   edge_attr=torch.empty((0, 5), dtype=torch.float32),
+                   edge_weight=torch.empty(0, dtype=torch.float32))
 
     return label, ft_tensor, data
