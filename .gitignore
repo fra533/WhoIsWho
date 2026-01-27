@@ -9,3 +9,8 @@ train_test_split_robust*
 tbr*
 hyperopt_results*
 bond_unified_refined_analysis*
+hyperopt_multimetric_results*
+train_test_split_scientometrics*
+train_test_split_semanticweb*
+evaluation_results*
+best_params_trial49.json*
