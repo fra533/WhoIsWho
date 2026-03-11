@@ -29,15 +29,28 @@ torch.cuda.manual_seed(seed)
 device = torch.device(("cuda:"+str(args.gpu)) if torch.cuda.is_available() and args.cuda else "cpu")
 
 class BONDTrainer:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, **kwargs):
+        env_val = os.environ.get("NO_GNN", "0") 
+        
+        # Accetta "1", "True", "true" come True.
+        if isinstance(env_val, str):
+            self.no_gnn = env_val.lower() in ["1", "true"]
+        else:
+            self.no_gnn = bool(int(env_val))
+            
+        if self.no_gnn:
+            print("🚀 MODALITÀ NO_GNN ATTIVA: La GNN verrà bypassata.")
+        else:
+            print("🧠 MODALITÀ GNN ATTIVA: Procedo con il training.")
 
     def onehot_encoder(self, label_list):
-        if isinstance(label_list, np.ndarray):
-            labels_arr = label_list
+        if isinstance(label_list, list):
+            labels_arr = np.array(label_list)
+        elif isinstance(label_list, torch.Tensor):
+            labels_arr = label_list.detach().cpu().numpy()
         else:
-            labels_arr = np.array(label_list.cpu().detach().numpy())
-        
+            labels_arr = np.array(label_list)
+
         num_classes = max(labels_arr) + 1
         # Se max è -1 (solo outliers), num_classes diventa 0. Gestiamo il caso:
         num_classes = max(0, num_classes)
@@ -182,7 +195,6 @@ class BONDTrainer:
         names, pubs = load_dataset(datatype)
         
         if datatype in ['valid', 'test']:
-            # Carica ground truth
             if datatype == 'valid':
                 gt_file = join(args.save_path, 'src', 'sna-valid', 'sna_valid_ground_truth.json')
             else:
@@ -193,7 +205,6 @@ class BONDTrainer:
                 with open(gt_file, 'r', encoding='utf-8') as f:
                     ground_truth = json.load(f)
                 
-                # Filtra
                 gt_names = set(ground_truth.keys())
                 names = [n for n in names if n in gt_names]
                 pubs = {n: pubs[n] for n in names if n in pubs}
@@ -203,11 +214,9 @@ class BONDTrainer:
                 print(f"{'='*70}\n")
             else:
                 print(f"⚠️  Ground truth file not found: {gt_file}")
-        # =========================================================
-        
+
         results = {}
         
-        # Statistiche per monitorare
         total_authors = len(names)
         processed_authors = 0
         special_case_authors = 0
@@ -221,10 +230,8 @@ class BONDTrainer:
             # ==== Load data ====
             label, ft_list, data = load_graph(name)
             
-            # Check se load fallito
             if label is None or ft_list is None or data is None:
                 print(f"  ❌ Failed to load graph files")
-                # Crea cluster per tutti i paper
                 name_pubs = []
                 if datatype == 'train':
                     for aid in pubs[name]:
@@ -258,16 +265,14 @@ class BONDTrainer:
                 print(f"     This should NOT happen if graphs were built correctly.")
                 print(f"     → SKIPPING {name}")
                 
-                # Crea singleton clusters come fallback
                 clusters = [[pid] for pid in name_pubs]
                 results[name] = clusters
                 special_case_authors += 1
                 special_case_info.append((name, n_nodes, len(name_pubs), "Build error"))
                 continue
-            # ==============================
             
             print(f"  Graph: {n_nodes} nodes, {n_edges} edges")
-            
+
             # ===== GESTIONE CASI SPECIALI =====
             
             # CASO 1: Single paper
@@ -315,125 +320,111 @@ class BONDTrainer:
             # CASO 4: Small graph (5-9 nodes) - warning ma continua
             if n_nodes < 10:
                 print(f"  ⚠️  Small graph, results may be suboptimal")
-            
-            # ===== TRAINING NORMALE (>=5 nodes con edges) =====
-            
-            # Assicura tipo corretto
-            data.edge_index = data.edge_index.long()
-            
-            num_cluster = int(ft_list.shape[0]*args.compress_ratio)
-            layer_shape = []
-            input_layer_shape = ft_list.shape[1]
-            hidden_layer_shape = args.hidden_dim
-            output_layer_shape = num_cluster
-            
-            layer_shape.append(input_layer_shape)
-            layer_shape.extend(hidden_layer_shape)
-            layer_shape.append(output_layer_shape)
 
-            # ==== Init model ====
-            model = GAE(ATTGNN(layer_shape))
-            ft_list = ft_list.float()
-            ft_list = ft_list.to(device)
-            data = data.to(device)
-            model.to(device)
-            
-            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_coef)
+            # ===== 2. LOGICA GNN O BYPASS =====
+            if self.no_gnn:
+                # BYPASS: Saltiamo tutto il training della GNN
+                print(f"  → GNN BYPASS: Clustering su feature originali (768d)")
+                embd = F.normalize(ft_list.float().to(device), p=2, dim=1)
 
-            for epoch in range(args.epochs):
-                # ==== Train ====
-                model.train()
-                optimizer.zero_grad()
+            else:
+                # TRAINING GNN NORMALE (>=5 nodes con edges)
+                print(f"  → GNN TRAINING: In corso...")
+
+                data.edge_index = data.edge_index.long()
                 
-                logits, embd = model.encode(ft_list, data.edge_index, data.edge_attr)
-                dis = pairwise_distances(embd.cpu().detach().numpy(), metric='cosine')
-                db_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(dis) 
-                db_label = torch.from_numpy(db_label)
-                db_label = db_label.to(device) 
-                '''
-                print(f"\n[DEBUG] {name}:")
-                #print(f"  -> DBSCAN Labels trovate: {unique_labels}")
-                if -1 in unique_labels:
-                    print(f"  -> ATTENZIONE: DBSCAN ha trovato RUMORE (-1).")
-
-                if args.post_match:
-                    print("  -> Eseguo POST-MATCH (che potrebbe separare i cluster).")
-                else:
-                    print("  -> POST-MATCH disabilitato.")
-
-                unique_labels = set(db_label.cpu().numpy())
-                '''
-                # change to one-hot form
-                class_matrix = torch.from_numpy(self.onehot_encoder(db_label))
-                # get N * N matrix
-                local_label = torch.mm(class_matrix, class_matrix.t())
-                local_label = local_label.float()
-                local_label = local_label.to(device)
-
-                global_label = torch.matmul(logits, logits.t())
+                num_cluster = int(ft_list.shape[0] * args.compress_ratio)
+                layer_shape = []
+                input_layer_shape = ft_list.shape[1]
+                hidden_layer_shape = args.hidden_dim
+                output_layer_shape = num_cluster
                 
-                loss_cluster = F.binary_cross_entropy_with_logits(global_label, local_label)
-                loss_recon = model.recon_loss(embd, data.edge_index)
-                
-                # Controllo per NaN
-                if torch.isnan(loss_cluster) or torch.isnan(loss_recon):
-                    print(f"  WARNING: NaN detected at epoch {epoch}")
-                    continue
+                layer_shape.append(input_layer_shape)
+                layer_shape.extend(hidden_layer_shape)
+                layer_shape.append(output_layer_shape)
 
-                w_cluster = args.cluster_w
-                w_recon = 1 - w_cluster
-                loss_train = w_cluster * loss_cluster + w_recon * loss_recon
+                # ==== Init model ====
+                model = GAE(ATTGNN(layer_shape))
+                ft_list = ft_list.float().to(device)
+                data = data.to(device)
+                model.to(device)
                 
-                if (epoch % 5) == 0:
-                    print(
-                        'epoch: {:3d}'.format(epoch),
-                        'cluster loss: {:.4f}'.format(loss_cluster.item()),
-                        'recon loss: {:.4f}'.format(loss_recon.item()),
-                        'ALL loss: {:.4f}'.format(loss_train.item())
-                    )
+                optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_coef)
 
-                loss_train.backward()
-                optimizer.step()
-            
-            # ==== Evaluate ====
-            with torch.no_grad():
-                model.eval()
-                logits, embd = model.encode(ft_list, data.edge_index, data.edge_attr)
-                gl_label = torch.matmul(logits, logits.t())
-                
-                lc_dis = pairwise_distances(embd.cpu().detach().numpy(), metric='cosine')
-                local_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(lc_dis) 
-                gl_dis = pairwise_distances(gl_label.cpu().detach().numpy(), metric='cosine')
-                gl_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(gl_dis) 
-                
-                # ===== USA DIRETTAMENTE I LABEL =====
-                pred = local_label.tolist()
-
-                if args.post_match:
-                    pred = self.post_match(pred, name_pubs, name, datatype)
-
-                # ===== CONVERTI LABEL IN CLUSTER =====
-                clusters = self.labels_to_clusters(pred, name_pubs)
-                
-                # ===== DEBUG (primi 3 autori processati normalmente) =====
-                if processed_authors < 3:
-                    print(f"\n{'='*70}")
-                    print(f"CLUSTERING DEBUG: {name}")
-                    print(f"{'='*70}")
-                    print(f"  Papers: {len(name_pubs)}")
-                    print(f"  Unique labels: {len(set(pred))}")
-                    print(f"  Outliers (label=-1): {sum(1 for l in pred if l == -1)}")
-                    print(f"  Clusters created: {len(clusters)}")
-                    print(f"  Cluster sizes: {sorted([len(c) for c in clusters], reverse=True)[:10]}")
+                for epoch in range(args.epochs):
+                    model.train()
+                    optimizer.zero_grad()
                     
-                    n_singletons = sum(1 for c in clusters if len(c) == 1)
-                    print(f"  Singletons: {n_singletons}/{len(clusters)} ({n_singletons/len(clusters)*100:.1f}%)")
-                    print(f"{'='*70}\n")
-                # ==================================================
+                    # 1. Generazione Embedding
+                    logits, embd = model.encode(ft_list, data.edge_index, data.edge_attr)
+
+                    # Normalizzazione L2
+                    embd = F.normalize(embd, p=2, dim=1)
+
+                    # 2. Calcolo Loss di Ricostruzione con campioni negativi
+                    loss_recon = model.recon_loss(embd, data.edge_index)
+
+                    # 3. Calcolo Loss di Clustering (DBSCAN + BCE)
+                    dis = pairwise_distances(embd.cpu().detach().numpy(), metric='cosine')
+                    db_label = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(dis)
+                    db_label = torch.from_numpy(db_label).to(device)
+                    
+                    class_matrix = torch.from_numpy(self.onehot_encoder(db_label)).float().to(device)
+                    local_label = torch.mm(class_matrix, class_matrix.t())
+
+                    global_label = torch.matmul(logits, logits.t())
+                    loss_cluster = F.binary_cross_entropy_with_logits(global_label, local_label)
+
+                    # 4. Bilanciamento e Backpropagation
+                    w_cluster = args.cluster_w
+                    w_recon = 1 - w_cluster
+                    loss_train = w_cluster * loss_cluster + w_recon * loss_recon
+                    
+                    if (epoch % 5) == 0:
+                        print(
+                            'epoch: {:3d}'.format(epoch),
+                            'cluster loss: {:.4f}'.format(loss_cluster.item()),
+                            'recon loss: {:.4f}'.format(loss_recon.item()),
+                            'ALL loss: {:.4f}'.format(loss_train.item())
+                        )
+
+                    loss_train.backward()
+                    optimizer.step()
                 
-                # Save results
-                results[name] = clusters
-                processed_authors += 1
+                # ==== Evaluate (solo se GNN trainata) ====
+                with torch.no_grad():
+                    model.eval()
+                    logits, embd = model.encode(ft_list, data.edge_index, data.edge_attr)
+
+            # ===== CLUSTERING FINALE (comune a GNN e bypass) =====
+            
+            with torch.no_grad():
+                lc_dis = pairwise_distances(embd.cpu().detach().numpy(), metric='cosine')
+                pred = DBSCAN(eps=args.db_eps, min_samples=args.db_min, metric='precomputed').fit_predict(lc_dis)
+                pred = pred.tolist()
+            
+            if args.post_match:
+                pred = self.post_match(pred, name_pubs, name, datatype)
+
+            clusters = self.labels_to_clusters(pred, name_pubs)
+            
+            # ===== DEBUG (primi 3 autori processati normalmente) =====
+            if processed_authors < 3:
+                print(f"\n{'='*70}")
+                print(f"CLUSTERING DEBUG: {name}")
+                print(f"{'='*70}")
+                print(f"  Papers: {len(name_pubs)}")
+                print(f"  Unique labels: {len(set(pred))}")
+                print(f"  Outliers (label=-1): {sum(1 for l in pred if l == -1)}")
+                print(f"  Clusters created: {len(clusters)}")
+                print(f"  Cluster sizes: {sorted([len(c) for c in clusters], reverse=True)[:10]}")
+                
+                n_singletons = sum(1 for c in clusters if len(c) == 1)
+                print(f"  Singletons: {n_singletons}/{len(clusters)} ({n_singletons/len(clusters)*100:.1f}%)")
+                print(f"{'='*70}\n")
+
+            results[name] = clusters
+            processed_authors += 1
 
         # Stampa statistiche finali
         print("\n" + "="*70)
