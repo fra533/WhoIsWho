@@ -532,41 +532,10 @@ class BondPipeline:
             model_type = self.config['model_type']
             print(f"\nTraining model: {model_type}")
             print(f"Mode: {self.mode}")
-
-            # ============================================================
-            # ⚡ INIZIO LOGICA BYPASS GNN (ABLATION STUDY) ⚡
-            # ============================================================
-            # Verifica la variabile d'ambiente settata da run_experiments.py
-            if os.getenv("NO_GNN") == "1":
-                print("\n⚠️  GNN BYPASS ACTIVATED (Ablation Mode) ⚠️")
-                print("[PATCH] Sto sostituendo la GNN con una funzione identità...")
-                
-                # Importiamo il modulo dove è definita la GNN
-                import training.autotrain_bond as ab
-
-                # Controlliamo se la classe esiste nel modulo
-                if hasattr(ab, 'ATTGNN'):
-                    ModelClass = ab.ATTGNN
-                    
-                    # Definiamo la funzione "fake" che sostituisce la rete neurale.
-                    # Restituisce (x, x) perché il trainer si aspetta (logits, embedding).
-                    # Restituendo x (le feature originali), simuliamo l'assenza della GNN.
-                    def identity_forward_tuple(self, x, *args, **kwargs):
-                        return x, x
-
-                    # Sovrascriviamo il metodo forward della CLASSE
-                    ModelClass.forward = identity_forward_tuple
-                    print(f"✅ [PATCH] Metodo forward di {ModelClass.__name__} sostituito con successo.\n")
-                else:
-                    print("❌ [ERROR] Impossibile trovare la classe ATTGNN in autotrain_bond per applicare la patch.")
-            else:
-                print("✅ GNN Active: Using standard Full Topology Model")
-            # ============================================================
-            # ⚡ FINE LOGICA BYPASS GNN ⚡
-            # ============================================================
             
             if model_type == 'bond':
-                trainer = BONDTrainer()
+                no_gnn = os.getenv("NO_GNN") == "1"
+                trainer = BONDTrainer(no_gnn=no_gnn)
                 trainer.fit(datatype=self.mode)
             elif model_type == 'bond+':
                 trainer = ESBTrainer()
