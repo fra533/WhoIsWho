@@ -56,15 +56,19 @@ def get_user_choice():
     print("Quale tipo di embedding vuoi utilizzare per questi test?")
     print("  1) Specter (Default - Consigliato per Paper)")
     print("  2) Word2Vec (w2v)")
+    print("  3) SBERT (all-mpnet-base-v2)")
     
     while True:
-        choice = input("\nInserisci scelta [1 o 2]: ").strip().lower()
+        choice = input("\nInserisci scelta [1, 2 o 3]: ").strip().lower()
         if choice in ['1', 'specter', 's']:
             print("✅ Selezionato: SPECTER")
             return 'specter'
         elif choice in ['2', 'w2v', 'w']:
             print("✅ Selezionato: WORD2VEC")
             return 'w2v'
+        elif choice in ['3', 'sbert', 'sb']: 
+            print("✅ Selezionato: SBERT")
+            return 'sbert'
         else:
             print("❌ Scelta non valida. Riprova.")
 
@@ -117,6 +121,8 @@ def run_session():
     # 2. Configura dimensioni in base alla scelta
     if selected_emb == 'specter':
         current_hidden_dim = [768, 512]
+    elif selected_emb == 'sbert':
+        current_hidden_dim = [768, 512]
     else: # w2v
         current_hidden_dim = [256, 128] # Modifica qui se i tuoi w2v hanno dim diverse
 
@@ -133,40 +139,169 @@ def run_session():
     # 4. Lista Esperimenti (Template Generico)
     # Nota: I parametri qui sotto (eps, min) sono specifici per l'esperimento
     experiments_template = [
-
-        # ===========================================================================
-    # 🧪 C2: SPECTER + WhoIsWho + CIT + GNN
+    # ===========================================================================
+    # 🧪 D3: SBERT(all-mpnet-base-v2) + OC + CIT + GNN - TARGET
     # ===========================================================================
     {
-        "id": "",  # <--- AGGIUNGI QUESTA RIGA
-        "suffix": "WHOISWHO_CIT_TRAIN_GNN",
+        "Experiment_ID": "D3_v2_TR",
+        "suffix": "SBERT_OC_",
         "mode": "train",
-        "no_gnn": "0",
-        "params": {"db_eps": 0.01, "db_min": 5, "epochs": 0, "lr": 5e-6, "use_citations": True}
+        "no_gnn": "True",
+        "params": {
+            "db_eps": 0.3, #[0.15-1]
+            "db_min": 4, 
+            "hidden_dim": [768, 512],
+            #"cite_out_weight": 0.3,
+            #"cite_in_weight":0.1,
+            #"epochs": 0,
+            #"lr": 1e-4,
+            #"cluster_w":0.2,
+
+        }
     },
     {
-        "suffix": "WHOISWHO_CIT_VALID_GNN",
+        "Experiment_ID": "D3_v2_VAL",
+        "suffix": "SBERT_OC",
         "mode": "valid",
-        "no_gnn": "0",
-        "params": {"db_eps": 0.20, "db_min": 2, "use_citations": True}},
+        "no_gnn": "True",
+        "params": {
+            "db_eps": 0.3,
+            "db_min": 4, 
+            "hidden_dim": [768, 512],
+            #"cite_out_weight": 0.3,
+            #"cite_in_weight":0.1,
+            #"epochs": 10,
+            #"lr": 1e-4,
+            #"cluster_w":0.2,
+
+        }
+    }
+    # ===========================================================================
+    # 🧪 D2: SBERT(all-mpnet-base-v2) + WhoIsWho + CIT + GNN
+    # ===========================================================================
+    #{
+    #    "suffix": "WHOISWHO_CIT_TRAIN_GNN",
+    #    "mode": "train",
+    #    "no_gnn": "0",
+    #    "params": {
+    #        "db_eps": 0.20,
+    #        "db_min": 5,
+    #        "epochs": 10,
+    #        "lr": 5e-6,
+    #        "use_citations": True,
+    #        "emb_type": "sbert"
+    #    },
+    #    "Experiment_ID": "D2"
+    #},
+    #{
+    #    "suffix": "WHOISWHO_CIT_VALID_GNN",
+    #    "mode": "valid",
+    #    "no_gnn": "0",
+    #    "params": {
+    #        "db_eps": 0.20,
+    #        "db_min": 5,
+    #        "use_citations": True,
+    #        "emb_type": "sbert"
+    #    },
+    #    "Experiment_ID": "D2"
+    #}
+    # ===========================================================================
+    # 🧪 D4: SBERT + WhoIsWho + CIT +NO GNN
+    # ===========================================================================
+    #{
+    #    "suffix": "WHOISWHO_CIT_TRAIN_NO_GNN",
+    #    "mode": "train",
+    #    "no_gnn": "1",
+    #    "params": {
+    #    "db_eps": 0.13,
+    #    "db_min": 4,
+    #    "lr": 5e-6,
+    #    "use_citations": True,
+    #},
+    #    "Experiment_ID": "D4"
+    #},
+    #{
+    #    "suffix": "WHOISWHO_CIT_VALID_NO_GNN",
+    #    "mode": "valid",
+    #    "no_gnn": "1",
+    #    "params": {
+    #        "db_eps": 0.13,
+    #        "db_min": 4,
+    #        "use_citations": True,
+    #    },
+    #    "Experiment_ID": "D4"
+    #}
+    # ===========================================================================
+    # 🧪 C2: SPECTER + WhoIsWho + CIT + GNN
+    # ===========================================================================
+    #{
+    #    "id": "C2",
+    #    "suffix": "SPECTER_CIT_TRAIN_GNN",
+    #    "mode": "train",
+    #    "no_gnn": "0",
+    #    "params": {
+    #        "epochs": 50,
+    #        "lr": 5e-5,
+    #        "cluster_w": 0.1,
+    #        "compress_ratio": 0.25,
+    #        "db_eps": 0.2,
+    #        "db_min": 2,
+    #        "use_citations": True
+    #        }
+    #},
+    #{
+    #    "suffix": "SPECTER_CIT_VALID_GNN",
+    #    "mode": "valid",
+    #    "no_gnn": "0",
+    #    "params": {"db_eps": 0.20, "db_min": 2,"epochs": 0, "use_citations": True}},
 
     # ===========================================================================
     # 🧪 C4: SPECTER + WhoIsWho + CIT + NO GNN
     # ===========================================================================
-    {
-        "suffix": "WHOISWHO_CIT_TRAIN_NO_GNN",
-        "mode": "train",
-        "no_gnn": "1",
-        "params": {"db_eps": 0.09, "db_min": 2, "epochs": 0, "lr": 5e-6, "use_citations": True}
-    },
-    {
-        "suffix": "WHOISWHO_CIT_VALID_NO_GNN",
-        "mode": "valid",
-        "no_gnn": "1",
-        "params": {"db_eps": 0.09, "db_min": 2, "use_citations": True}
-    },
-        
-        # ===========================================================================1
+    #{
+    #    "id": "C4",  
+    #   "suffix": "SPECTER_CIT_TRAIN_NO_GNN",
+    #    "mode": "train",
+    #    "no_gnn": "1",
+    #    "params": {"db_eps": 0.20, "db_min": 2, "use_citations": True}
+    #},
+    #{
+    #    "suffix": "SPECTER_CIT_VALID_NO_GNN",
+    #    "mode": "valid",
+    #    "no_gnn": "1",
+    #    "params": {"db_eps": 0.20, "db_min": 2, "use_citations": True}
+    #},
+    # ===========================================================================
+    # 🧪 B1: W2V + WhoIsWho + CIT + GNN
+    # ===========================================================================
+    #{
+    #    "suffix": "W2V_WHOISWHO_CIT_TRAIN_GNN",
+    #    "mode": "train",
+    #    "no_gnn": "0",
+    #    "params": {"db_eps": 0.01, "db_min": 5, "epochs": 0, "lr": 5e-6, "use_citations": True}
+    #},
+    #{
+    #    "suffix": "W2V_WHOISWHO_CIT_VALID_GNN",
+    #    "mode": "valid",
+    #    "no_gnn": "0",
+    #    "params": {"db_eps": 0.01, "db_min": 5, "use_citations": True}
+    #},
+    # ===========================================================================
+    # 🧪 B2: W2V + OC + CIT + GNN
+    # ===========================================================================
+    #{
+    #    "suffix": "W2V_OC_CIT_TRAIN_GNN",
+    #    "mode": "train",
+    #    "no_gnn": "0",
+    #    "params": {"db_eps": 0.01, "db_min": 5, "epochs": 0, "lr": 5e-6, "use_citations": True}
+    #},
+    #{
+    #    "suffix": "W2V_OC_CIT_VALID_GNN",
+    #    "mode": "valid",
+    #    "no_gnn": "0",
+    #    "params": {"db_eps": 0.01, "db_min": 5, "use_citations": True}
+    #},    
+     # ===========================================================================1
         
     # 🧪 C1: SPECTER + WhoIsWho + NO CIT + GNN
     # ===========================================================================
@@ -260,7 +395,7 @@ def run_session():
 
     # 5. Ciclo Esperimenti
     for idx, exp_data in enumerate(experiments_template):
-        exp_id = exp_data.get("id", "N/A")
+        exp_id = exp_data.get("Experiment_ID", "N/A")
         exp_name = f"{selected_emb.upper()}_{exp_data['suffix']}"
         
         print("\n" + "="*80)
