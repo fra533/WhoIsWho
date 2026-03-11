@@ -4,12 +4,13 @@ import sys
 def set_params():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--mode', type=str, default='valid')
+    parser.add_argument('--mode', type=str, default='train')
     parser.add_argument('--cuda', type=bool, default=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--epochs', type=int, default=0)
     parser.add_argument('--lr', type=float, default=5e-6)
+    parser.add_argument('--no_gnn', action='store_true')
 
     parser.add_argument('--save_path', type=str, default='dataset/data')
     parser.add_argument('--l2_coef', type=float, default=2.714679239042756e-05)
@@ -18,7 +19,7 @@ def set_params():
     # Consigliato per SPECTER2:
     parser.add_argument('--hidden_dim', nargs='+', type=int, default=[768, 512])
     parser.add_argument('--rel_on', type=str, default='aov')
-    parser.add_argument('--emb_type', type=str, default='specter', choices=['w2v', 'specter'],
+    parser.add_argument('--emb_type', type=str, default='specter', choices=['w2v', 'specter', 'sbert'],
                         help='Scegli tra word2vec (veloce) o specter (preciso, per paper scientifici)')
     
     parser.add_argument('--cluster_w', type=float, default=0.0)
@@ -31,7 +32,7 @@ def set_params():
 
     parser.add_argument('--db_eps', type=float, default=0.09)
     parser.add_argument('--db_min', type=int, default=2)
-    parser.add_argument('--post_match', type=bool, default=False)
+    parser.add_argument('--post_match', type=bool, default=True)
 
     # ✅ CORREZIONE: usa nargs='+' invece di type=list
     parser.add_argument('--th_a', nargs='+', type=float, default=[0, 1])
