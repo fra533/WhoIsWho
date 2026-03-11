@@ -66,8 +66,17 @@ def save_label_pubs(mode, name, raw_pubs, save_path):
 
 def save_emb(mode, name, pubs, save_path):
     emb_path = join(args.save_path, 'paper_emb', mode, name, 'ptext_emb.pkl')
-    # Determina la dimensione in base all'embedding scelto
-    ft_dim = 768 if args.emb_type == 'specter' else 256
+    
+    # ============================================================
+    # 🚨 MODIFICA CRITICA: FORZA LA DIMENSIONE A 768 PER SBERT
+    # ============================================================
+    # Se usi SBERT o SPECTER, la dimensione DEVE essere 768.
+    # Prima il tuo codice usava 256 come default, causando il crash.
+    if args.emb_type.lower() in ['specter', 'sbert']:
+        ft_dim = 768
+    else:
+        ft_dim = 256
+    # ============================================================
     
     ptext_emb = {}
     if os.path.exists(emb_path):
@@ -77,14 +86,24 @@ def save_emb(mode, name, pubs, save_path):
     feats_dict = {}
     for idx, pid in enumerate(pubs):
         if pid in ptext_emb:
-            # Assicuriamoci che il vettore caricato sia convertito correttamente
-            feats_dict[idx] = torch.tensor(ptext_emb[pid], dtype=torch.float32)
+            # Carichiamo il vettore esistente
+            vec = torch.tensor(ptext_emb[pid], dtype=torch.float32)
+            
+            # Controllo di sicurezza: se il vettore nel pkl ha una dimensione diversa
+            # (es. un vecchio residuo a 256), lo forziamo a ft_dim (768)
+            if vec.shape[0] != ft_dim:
+                vec = torch.zeros(ft_dim, dtype=torch.float32)
+            
+            feats_dict[idx] = vec
         else:
-            # Crea un vettore di zeri della dimensione corretta (768 per SPECTER)
+            # 🚨 Se il paper non ha un embedding, creiamo un vettore di zeri.
+            # È fondamentale che sia lungo ft_dim (768), non 256!
             feats_dict[idx] = torch.zeros(ft_dim, dtype=torch.float32)
     
+    # Salviamo il dizionario corretto
     np.save(join(save_path, 'feats_p.npy'), feats_dict)
 
+    
 # ============================================================
 # [MODIFICATO] COSTRUZIONE RESOLVER CON PULIZIA
 # ============================================================
