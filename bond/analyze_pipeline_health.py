@@ -44,7 +44,7 @@ def analyze_pipeline_health(mode='valid'):
     if mode == 'train':
         gt_path = base_path / 'src' / 'train' / 'train_author.json'
         pub_path = base_path / 'src' / 'train' / 'train_pub.json'
-        raw_path = base_path / 'src' / 'train' / 'train_raw.json'
+        
     else:
         gt_path = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_ground_truth.json'
         pub_path = base_path / 'src' / f'sna-{mode}' / f'sna_{mode}_pub.json'
@@ -53,7 +53,7 @@ def analyze_pipeline_health(mode='valid'):
     checks = {
         'Ground Truth': gt_path,
         'Publications': pub_path,
-        'Raw Pubs': raw_path,
+        #'Raw Pubs': raw_path,
         'W2V Model': base_path / 'w2v_model' / 'w2v_256.model',
         'Names Pub Dir': base_path / 'names_pub' / mode,
         'Relations Dir': base_path / 'relations' / mode,
