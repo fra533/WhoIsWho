@@ -22,6 +22,10 @@ def set_params():
     parser.add_argument('--emb_type', type=str, default='specter', choices=['w2v', 'specter', 'sbert'],
                         help='Scegli tra word2vec (veloce) o specter (preciso, per paper scientifici)')
     
+    parser.add_argument('--dataset_type', type=str, default='whoiswho', choices=['whoiswho', 'oc'])
+    parser.add_argument('--emb_dir_name', type=str, default='paper_emb', 
+                    help='Nome della cartella degli embedding (es. paper_emb_v2, paper_emb_specter)')
+    
     parser.add_argument('--cluster_w', type=float, default=0.0)
     parser.add_argument('--prob_v', type=float, default=0.9)
     parser.add_argument('--coa_th', type=int, default=2)
@@ -32,7 +36,9 @@ def set_params():
 
     parser.add_argument('--db_eps', type=float, default=0.09)
     parser.add_argument('--db_min', type=int, default=2)
+    #parser.add_argument('--post_match', action='store_true', default=False)
     parser.add_argument('--post_match', type=bool, default=True)
+
 
     # ✅ CORREZIONE: usa nargs='+' invece di type=list
     parser.add_argument('--th_a', nargs='+', type=float, default=[0, 1])
@@ -46,9 +52,12 @@ def set_params():
     # ✅ AGGIUNTO: citation weights
     parser.add_argument('--cite_out_weight', type=float, default=0.3)
     parser.add_argument('--cite_in_weight', type=float, default=0.2)
-    parser.add_argument('--use_citations', type=bool, default=True)
+    parser.add_argument('--use_citations', action='store_true', default=False)
     
     args, _ = parser.parse_known_args()
+
+    if args.emb_dir_name == 'paper_emb':
+        args.emb_dir_name = f"paper_emb_{args.dataset_type}_{args.emb_type}"
     
     # Backward compatibility
     if not args.use_citations:
