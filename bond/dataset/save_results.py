@@ -2,53 +2,45 @@ import os
 import json
 import codecs
 from os.path import join
-from params import set_params
 
-args = set_params()
 
 def check_mkdir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+
 
 def dump_json(obj, wfname, indent=None):
     with codecs.open(wfname, 'w', encoding='utf-8') as wf:
         json.dump(obj, wf, ensure_ascii=False, indent=indent)
 
 
-def save_results(names, pubs, results):
+def save_results(args, names, pubs, results):
     result_dict = {}
-    
+
     for name in names:
-        # Check formato pubs
         if isinstance(pubs[name], dict):
-            # TRAIN format: dict di autori
             paper_ids = []
             for aid in pubs[name]:
                 paper_ids.extend(pubs[name][aid])
         elif isinstance(pubs[name], list):
-            # VALID/TEST format: lista diretta
             paper_ids = pubs[name]
         else:
             print(f"Warning: unexpected format for {name}")
             paper_ids = []
-        
-        # Converti cluster in formato finale
+
         clusters = results[name]
-        
-        # Assicurati che clusters sia lista di liste
         if not isinstance(clusters, list):
             print(f"Warning: {name} has wrong format, converting")
             clusters = [[clusters]] if clusters else []
-        
+
         result_dict[name] = clusters
-    
-    # Salva
-    output_dir = 'out'
+
+    output_dir  = 'out'
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'res.json')
-    
+
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(result_dict, f, indent=2, ensure_ascii=False)
-    
+
     print(f"Results saved to: {output_file}")
     return output_file
