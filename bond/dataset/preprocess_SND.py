@@ -3,13 +3,10 @@ import re
 from tqdm import tqdm
 from os.path import join
 
-from bond.params import set_params
 from bond.dataset.dump_graph import build_graph
 from bond.dataset.load_data import load_json
 from bond.dataset.save_results import dump_json, check_mkdir
 from bond.character.match_name import match_name
-
-args = set_params()
 
 puncs = r"[!\"\"\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~—~]+"
 stopwords = ['at', 'based', 'in', 'of', 'for', 'on', 'and', 'to', 'an', 'using', 'with',
@@ -21,15 +18,13 @@ stopwords_extend = ['university', 'univ', 'china', 'department', 'dept', 'labora
 stopwords_check = ['a', 'was', 'were', 'that', '2', 'key', '1', 'technology', '0', 'sciences', 'as',
                     'from', 'r', '3', 'academy', 'this', 'nanjing', 'shanghai', 'state', 's', 'research',
                     'p', 'results', 'peoples', '4', 'which', '5', 'high', 'materials', 'study', 'control',
-                    'method', 'group', 'c', 'between', 'or', 'it', 'than', 'analysis', 'system',  'sci',
+                    'method', 'group', 'c', 'between', 'or', 'it', 'than', 'analysis', 'system', 'sci',
                     'two', '6', 'has', 'h', 'after', 'different', 'n', 'national', 'japan', 'have', 'cell',
                     'time', 'zhejiang', 'used', 'data', 'these']
 
 
-def read_pubinfo(mode):
-    """
-    Read pubs' meta-information.
-    """
+def read_pubinfo(args, mode):
+    """Read pubs' meta-information."""
     base = join(args.save_path, "src")
 
     if mode == 'train':
@@ -40,14 +35,12 @@ def read_pubinfo(mode):
         pubs = load_json(join(base, 'sna-test', 'sna_test_pub.json'))
     else:
         raise ValueError('choose right mode')
-    
+
     return pubs
 
 
-def read_raw_pubs(mode):
-    """
-    Read raw pubs.
-    """
+def read_raw_pubs(args, mode):
+    """Read raw pubs."""
     base = join(args.save_path, "src")
 
     if mode == 'train':
@@ -58,21 +51,21 @@ def read_raw_pubs(mode):
         raw_pubs = load_json(join(base, "sna-test", "sna_test_raw.json"))
     else:
         raise ValueError('choose right mode')
-    
+
     return raw_pubs
 
 
-def dump_name_pubs():
+def dump_name_pubs(args):
     """
     Split publications informations by {name} and dump files as {name}.json
     """
     for mode in ['train', 'valid', 'test']:
-        raw_pubs = read_raw_pubs(mode)
-        pub_info = read_pubinfo(mode)
+        raw_pubs = read_raw_pubs(args, mode)
+        pub_info = read_pubinfo(args, mode)
         file_path = join(args.save_path, 'names_pub', mode)
         if not os.path.exists(file_path):
             check_mkdir(file_path)
-        
+
         for name in tqdm(raw_pubs):
             name_pubs_raw = {}
             if mode != "train":
@@ -83,25 +76,21 @@ def dump_name_pubs():
                 pids = []
                 for aid in raw_pubs[name]:
                     paper_ids = raw_pubs[name][aid]
-                    
-                    # Gestisci diversi formati
                     if isinstance(paper_ids, list):
                         pids.extend(paper_ids)
                     elif isinstance(paper_ids, (int, str)):
                         pids.append(str(paper_ids))
-                
+
                 for pid in pids:
                     if pid in pub_info:
                         name_pubs_raw[pid] = pub_info[pid]
 
-            dump_json(name_pubs_raw, join(file_path, name+'.json'), indent=4)
+            dump_json(name_pubs_raw, join(file_path, name + '.json'), indent=4)
 
 
 def unify_name_order(name):
     """
-    unifying different orders of name.
-    Args:
-        name
+    Unifying different orders of name.
     Returns:
         name and reversed name
     """
@@ -115,33 +104,33 @@ def unify_name_order(name):
     return name, name_reverse
 
 
-def dump_features_relations_to_file():
+def dump_features_relations_to_file(args):
     """
     Generate paper features and relations by raw publication data and dump to files.
-    Paper features consist of title, org, keywords. 
-    Paper relations consist of author_name, org, venue, CITATIONS.
+    Paper features: title, org, keywords.
+    Paper relations: author_name, org, venue, citations.
     """
     r = '[!"""#$%&\'()*+,-./:;<=>?@\[\\\\]^_`{|}~—～]+'
-    
+
     for mode in ['train', 'valid', 'test']:
-        raw_pubs = read_raw_pubs(mode)
-        
+        raw_pubs = read_raw_pubs(args, mode)
+
         print(f"\nProcessing {mode} mode...")
-        
+
         for n, name in tqdm(enumerate(raw_pubs)):
 
             file_path = join(args.save_path, 'relations', mode, name)
             check_mkdir(file_path)
-            
-            coa_file = open(join(file_path, 'paper_author.txt'), 'w', encoding='utf-8')
-            cov_file = open(join(file_path, 'paper_venue.txt'), 'w', encoding='utf-8')
-            cot_file = open(join(file_path, 'paper_title.txt'), 'w', encoding='utf-8')
-            coo_file = open(join(file_path, 'paper_org.txt'), 'w', encoding='utf-8')
+
+            coa_file      = open(join(file_path, 'paper_author.txt'),   'w', encoding='utf-8')
+            cov_file      = open(join(file_path, 'paper_venue.txt'),    'w', encoding='utf-8')
+            cot_file      = open(join(file_path, 'paper_title.txt'),    'w', encoding='utf-8')
+            coo_file      = open(join(file_path, 'paper_org.txt'),      'w', encoding='utf-8')
             cite_out_file = open(join(file_path, 'paper_cite_out.txt'), 'w', encoding='utf-8')
-            cite_in_file = open(join(file_path, 'paper_cite_in.txt'), 'w', encoding='utf-8')
+            cite_in_file  = open(join(file_path, 'paper_cite_in.txt'),  'w', encoding='utf-8')
 
             authorname_dict = {}
-            pubs_dict = load_json(join(args.save_path, 'names_pub', mode, name+'.json'))
+            pubs_dict = load_json(join(args.save_path, 'names_pub', mode, name + '.json'))
 
             ori_name = name
             name, name_reverse = unify_name_order(name)
@@ -150,26 +139,17 @@ def dump_features_relations_to_file():
                 pub = pubs_dict[pid]
 
                 # Save title
-                title = pub["title"]
-                pstr = title.strip()
-                pstr = pstr.lower()
+                pstr = pub["title"].strip().lower()
                 pstr = re.sub(r, ' ', pstr)
-                pstr = re.sub(r'\s{2,}', ' ', pstr).strip()
-                pstr = pstr.split(' ')
-                pstr = [word for word in pstr if len(word) > 1]
-                pstr = [word for word in pstr if word not in stopwords]
-                pstr = [word for word in pstr if word not in stopwords_check]
+                pstr = re.sub(r'\s{2,}', ' ', pstr).strip().split(' ')
+                pstr = [w for w in pstr if len(w) > 1 and w not in stopwords and w not in stopwords_check]
                 for word in pstr:
                     cot_file.write(pid + '\t' + word + '\n')
 
                 # Save keywords
-                word_list = []
                 if "keywords" in pub:
-                    for word in pub["keywords"]:
-                        word_list.append(word)
-                    pstr = " ".join(word_list)
+                    pstr = " ".join(pub["keywords"])
                     pstr = re.sub(' +', ' ', pstr)
-                keyword = pstr
 
                 # Save org
                 org = ""
@@ -187,7 +167,7 @@ def dump_features_relations_to_file():
                                 authorname = authorname_reverse
                     else:
                         authorname = authorname.replace(" ", "")
-                    
+
                     if authorname != name and authorname != name_reverse:
                         coa_file.write(pid + '\t' + authorname + '\n')
                     else:
@@ -201,74 +181,54 @@ def dump_features_relations_to_file():
                             org = author['org']
                             break
 
-                pstr = org.strip()
-                pstr = pstr.lower()
+                pstr = org.strip().lower()
                 pstr = re.sub(puncs, ' ', pstr)
-                pstr = re.sub(r'\s{2,}', ' ', pstr).strip()
-                pstr = pstr.split(' ')
-                pstr = [word for word in pstr if len(word) > 1]
-                pstr = [word for word in pstr if word not in stopwords]
-                pstr = [word for word in pstr if word not in stopwords_extend]
-                pstr = set(pstr)
+                pstr = re.sub(r'\s{2,}', ' ', pstr).strip().split(' ')
+                pstr = set(w for w in pstr if len(w) > 1 and w not in stopwords and w not in stopwords_extend)
                 for word in pstr:
                     coo_file.write(pid + '\t' + word + '\n')
-                
+
                 # Save venue
                 if pub["venue"]:
-                    pstr = pub["venue"].strip()
-                    pstr = pstr.lower()
+                    pstr = pub["venue"].strip().lower()
                     pstr = re.sub(puncs, ' ', pstr)
-                    pstr = re.sub(r'\s{2,}', ' ', pstr).strip()
-                    pstr = pstr.split(' ')
-                    pstr = [word for word in pstr if len(word) > 1]
-                    pstr = [word for word in pstr if word not in stopwords]
-                    pstr = [word for word in pstr if word not in stopwords_extend]
-                    pstr = [word for word in pstr if word not in stopwords_check]
+                    pstr = re.sub(r'\s{2,}', ' ', pstr).strip().split(' ')
+                    pstr = [w for w in pstr if len(w) > 1
+                            and w not in stopwords
+                            and w not in stopwords_extend
+                            and w not in stopwords_check]
                     for word in pstr:
                         cov_file.write(pid + '\t' + word + '\n')
                     if len(pstr) == 0:
                         cov_file.write(pid + '\t' + 'null' + '\n')
-                
-                # Outgoing citations
+
+                # Outgoing citations — solo DOI (iniziano con "10.")
                 if "outgoing_citations" in pub and pub["outgoing_citations"]:
                     citations = pub["outgoing_citations"]
-                    
                     all_refs = []
                     if isinstance(citations, list):
-                        for citation_str in citations:
-                            if isinstance(citation_str, str):
-                                all_refs.extend(citation_str.split())
-                            else:
-                                all_refs.append(str(citation_str))
+                        for c in citations:
+                            all_refs.extend(c.split() if isinstance(c, str) else [str(c)])
                     elif isinstance(citations, str):
                         all_refs = citations.split()
-                    
-                    # Scrivi SOLO i DOI (iniziano con "10.")
                     for ref_id in all_refs:
                         ref_id = ref_id.strip().lower()
                         if ref_id and ref_id.startswith("10."):
                             cite_out_file.write(f"{pid}\t{ref_id}\n")
 
-                # Incoming citations - SOLO DOI
+                # Incoming citations — solo DOI
                 if "incoming_citations" in pub and pub["incoming_citations"]:
                     citations = pub["incoming_citations"]
-                    
                     all_citing = []
                     if isinstance(citations, list):
-                        for citation_str in citations:
-                            if isinstance(citation_str, str):
-                                all_citing.extend(citation_str.split())
-                            else:
-                                all_citing.append(str(citation_str))
+                        for c in citations:
+                            all_citing.extend(c.split() if isinstance(c, str) else [str(c)])
                     elif isinstance(citations, str):
                         all_citing = citations.split()
-                    
-                    # Scrivi SOLO i DOI (iniziano con "10.")
                     for citing_id in all_citing:
                         citing_id = citing_id.strip().lower()
                         if citing_id and citing_id.startswith("10."):
                             cite_in_file.write(f"{pid}\t{citing_id}\n")
-                # =================================================
 
             coa_file.close()
             cov_file.close()
@@ -276,28 +236,30 @@ def dump_features_relations_to_file():
             coo_file.close()
             cite_out_file.close()
             cite_in_file.close()
-            
+
         print(f'Finish {mode} data extracted.')
-    
-    print(f'\nAll paper features extracted.')
-    
+
+    print('\nAll paper features extracted.')
+
 
 if __name__ == "__main__":
-    """
-    Complete preprocessing pipeline
-    """
-    print("="*70)
+    from bond.params import set_params
+
+    print("=" * 70)
     print("BOND PREPROCESSING PIPELINE CON CITAZIONI")
-    print("="*70)
-    
+    print("=" * 70)
+
+    args = set_params()
+
     print("\n[1/3] Dumping name publications...")
-    dump_name_pubs()
-    
+    dump_name_pubs(args)
+
     print("\n[2/3] Extracting features and relations (including citations)...")
-    dump_features_relations_to_file()
-    
+    dump_features_relations_to_file(args)
+
     print("\n[3/3] Building graphs...")
-    build_graph()
-    print("\n" + "="*70)
+    build_graph(args)
+
+    print("\n" + "=" * 70)
     print("✓ PREPROCESSING COMPLETATO!")
-    print("="*70)
+    print("=" * 70)
