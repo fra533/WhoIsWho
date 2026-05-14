@@ -60,8 +60,6 @@ from training.autotrain_bond_ensemble import ESBTrainer
 from dataset.preprocess_SND import dump_name_pubs, dump_features_relations_to_file, build_graph
 from params import set_params
 
-args = set_params()
-
 
 class BondPipeline:
     """
@@ -73,7 +71,8 @@ class BondPipeline:
     - VALIDATION: Training + eval su validation set
     """
     
-    def __init__(self):
+    def __init__(self, args):
+        self.args = args
         self.base_path = Path(args.save_path)
         self.mode = args.mode
         self.results = {}
@@ -150,9 +149,11 @@ class BondPipeline:
         w2v_model_path = self.base_path / 'w2v_model' / 'w2v_256.model'
         availability['w2v_done'] = w2v_model_path.exists()
         
-        paper_emb_dir = self.base_path / 'paper_emb' / self.mode
+        emb_folder = getattr(self.args, 'emb_dir_name', 'paper_emb')
+        paper_emb_dir = self.base_path / emb_folder / self.mode
+    
         availability['embeddings_done'] = (
-            paper_emb_dir.exists() and any(paper_emb_dir.iterdir())
+        paper_emb_dir.exists() and any(paper_emb_dir.iterdir())
         )
         
         availability['can_skip_preprocess'] = (
@@ -202,9 +203,9 @@ class BondPipeline:
             print("="*70)
             print("\n✅ All preprocessing is available!")
             print("\nOptions:")
-            print("  1) Use existing preprocessing (FAST - recommended)")
-            print("  2) Redo all preprocessing (SLOW)")
-            print("  3) Custom (choose what to skip)")
+            print("  1) Use existing preprocessing. Attenzione, se cambi embeddings devi ricaricare i grafi!")
+            print("  2) Redo all preprocessing. Attenzione, se cambi dataset devi rifare tutto il preprocessing!")
+            print("  3) Custom (choose what to keep or skip)")
             
             choice = input("\nYour choice [1/2/3, default=1]: ").strip() or "1"
             
@@ -273,46 +274,52 @@ class BondPipeline:
         input("\nPress ENTER to start pipeline...")
         
     def _custom_configuration(self, avail):
-        """Helper per configurazione custom"""
+        """Helper per configurazione custom (chiamato se l'utente sceglie '3' o se mancano file)"""
         print("\n" + "="*70)
         print("⚙️  CUSTOM CONFIGURATION")
         print("="*70)
         
-        print("\nWhat needs to be done:")
-        if not avail['part1_done']:
-            print("  ❌ Preprocessing Part 1 (names & features) - REQUIRED")
-        if not avail['part2_done']:
-            print("  ❌ Preprocessing Part 2 (graphs) - REQUIRED")
-        if not avail['embeddings_done']:
-            print(f"  ❌ Paper embeddings for mode '{self.mode}' - REQUIRED")
-        if not avail['w2v_done']:
-            print("  ❌ Word2Vec model - REQUIRED")
+        print("\nStato attuale componenti:")
+        print(f"  - Part 1 (nomi/feat): {'✅ OK' if avail['part1_done'] else '❌ MANCANTE'}")
+        print(f"  - Word2Vec/Emb:      {'✅ OK' if avail['w2v_done'] and avail['embeddings_done'] else '❌ MANCANTE'}")
+        print(f"  - Part 2 (grafi):     {'✅ OK' if avail['part2_done'] else '❌ MANCANTE'}")
         
-        print("\nOptions:")
-        print("  1) Do what's needed (recommended)")
-        print("  2) Redo everything from scratch")
+        print("\nOpzioni:")
+        print("  1) Esegui solo il necessario (Smart)")
+        print("  2) Rifa tutto da zero (Full Reset)")
+        print("  3) Selezione manuale (Expert)")
         
-        choice = input("\nYour choice [1/2, default=1]: ").strip() or "1"
+        choice = input("\nScelta [1/2/3, default=1]: ").strip() or "1"
         
         if choice == "1":
-            self.config['skip_preprocessing'] = (
-                avail['part1_done'] and avail['part2_done']
-            )
-            self.config['skip_w2v'] = (
-                avail['w2v_done'] and avail['embeddings_done']
-            )
-            print("\n✅ Will do only what's missing")
-        else:
+            # Esegue solo quello che fisicamente manca sul disco
+            self.config['skip_preprocessing'] = avail['part1_done']
+            self.config['skip_w2v'] = avail['w2v_done'] and avail['embeddings_done']
+            self.config['skip_graph'] = avail['part2_done']
+            print("\n✅ Configurazione automatica impostata.")
+            
+        elif choice == "2":
+            # Forza l'esecuzione di tutto
             self.config['skip_preprocessing'] = False
             self.config['skip_w2v'] = False
-            print("\n⚙️  Will redo everything")
-        
-        skip_conf = input("\nSkip confidence scoring? [y/N]: ").strip().lower()
+            self.config['skip_graph'] = False
+            print("\n⚙️  Verrà rifatto tutto il preprocessing.")
+            
+        else:
+            # Selezione manuale per ogni singolo step
+            print("\n--- Selezione manuale ---")
+            self.config['skip_preprocessing'] = input("Saltare Part 1 (nomi/feat)? [Y/n]: ").strip().lower() != 'n'
+            self.config['skip_w2v'] = input("Saltare Word2Vec/Embeddings? [Y/n]: ").strip().lower() != 'n'
+            self.config['skip_graph'] = input("Saltare Costruzione Grafi? [Y/n]: ").strip().lower() != 'n'
+
+        # Gestione Confidence
+        skip_conf = input("\nSaltare confidence scoring? [y/N]: ").strip().lower()
         self.config['skip_confidence'] = (skip_conf == 'y')
 
     def run_full_pipeline(self):
         """
-        Esegue l'intera pipeline dall'inizio alla fine
+        Esegue l'intera pipeline dall'inizio alla fine seguendo le 
+        impostazioni definite in interactive_configuration.
         """
         if not self.config['hyperopt_mode']:
             print("\n" + "="*70)
@@ -320,57 +327,53 @@ class BondPipeline:
             print("="*70)
             print("""
             Step 1: Preprocessing (Part 1) - Names & Features
-            Step 2: Word2Vec Training & Embeddings
+            Step 2: Word2Vec Training & Embeddings - Lanciare solamente per creare w2v emb
             Step 3: Preprocessing (Part 2) - Graph Building
             Step 4: Model Training
             Step 5: Multi-Metric Evaluation
             Step 6: Confidence Scoring & Filtering
             """)
             
-            # ========== DEBUG ==========
-            print(f"\n[DEBUG] Will skip preprocessing: {self.config['skip_preprocessing']}")
-            print(f"[DEBUG] Will skip w2v: {self.config['skip_w2v']}")
-            # ===========================
+            # Debug dei flag correnti
+            print(f"\n[DEBUG] Status operazione:")
+            print(f"  - Skip Preprocessing P1: {self.config['skip_preprocessing']}")
+            print(f"  - Skip Word2Vec/Emb:     {self.config['skip_w2v']}")
+            print(f"  - Skip Graph Building:   {self.config.get('skip_graph', True)}")
         
-        # ========== DETERMINA SE FORZARE RERUN ==========
-        # Se skip=False significa che vogliamo eseguire, quindi force=True
-        force_preprocessing = not self.config['skip_preprocessing']
-        force_w2v = not self.config['skip_w2v']
-        
-        if not self.config['hyperopt_mode']:
-            print(f"\n[DEBUG] Force preprocessing: {force_preprocessing}")
-            print(f"[DEBUG] Force w2v: {force_w2v}")
-        # ================================================
-        
+        # --- STEP 1: PREPROCESSING PART 1 ---
         if not self.config['skip_preprocessing']:
-            success = self.step1_preprocessing_part1(force_rerun=force_preprocessing)
+            success = self.step1_preprocessing_part1(force_rerun=True)
             if not success:
                 return False
         else:
             if not self.config['hyperopt_mode']:
-                print("\n⏭️  Step 1: SKIPPED (using existing)")
-        
+                print("\n⏭️  Step 1: SKIPPED (using existing name pubs & features)")
+
+        # --- STEP 2: WORD2VEC & EMBEDDINGS ---
         if not self.config['skip_w2v']:
-            success = self.step2_word2vec(force_rerun=force_w2v)
+            success = self.step2_word2vec(force_rerun=True)
             if not success:
                 return False
         else:
             if not self.config['hyperopt_mode']:
                 print("\n⏭️  Step 2: SKIPPED (using existing model & embeddings)")
-        
-            
-        if not self.config['skip_preprocessing']:
-            success = self.step3_preprocessing_part2(force_rerun=force_preprocessing)
+
+        # --- STEP 3: GRAPH BUILDING (Indipendente dallo Step 1) ---
+        # Usiamo .get() per sicurezza nel caso il flag non sia stato inizializzato
+        if not self.config.get('skip_graph', True):
+            success = self.step3_preprocessing_part2(force_rerun=True)
             if not success:
                 return False
         else:
             if not self.config['hyperopt_mode']:
                 print("\n⏭️  Step 3: SKIPPED (using existing graphs)")
-        
+
+        # --- STEP 4: MODEL TRAINING ---
         success = self.step4_training()
         if not success:
             return False
         
+        # --- STEP 5: EVALUATION ---
         if not self.config['skip_evaluation']:
             success = self.step5_evaluation()
             if not success:
@@ -379,6 +382,7 @@ class BondPipeline:
             if not self.config['hyperopt_mode']:
                 print("\n⏭️  Step 5: SKIPPED")
         
+        # --- STEP 6: CONFIDENCE SCORING ---
         if not self.config['skip_confidence']:
             success = self.step6_confidence_scoring()
             if not success:
@@ -386,16 +390,17 @@ class BondPipeline:
         else:
             if not self.config['hyperopt_mode']:
                 print("\n⏭️  Step 6: SKIPPED")
-        
+
+        # --- CONCLUSIONE ---
         print("\n" + "="*70)
         print("✅ PIPELINE COMPLETED SUCCESSFULLY")
         print("="*70)
         
         if not self.config['hyperopt_mode']:
-            self._print_summary()
+            self.print_summary()
         
         return True
-
+    
     def step1_preprocessing_part1(self, force_rerun=False):
         """
         Step 1: Preprocessing Part 1
@@ -418,10 +423,10 @@ class BondPipeline:
         
         try:
             print("\n[1/2] Loading and dumping name publications...")
-            dump_name_pubs()
+            dump_name_pubs(self.args)
             
             print("\n[2/2] Creating features and relations...")
-            dump_features_relations_to_file()
+            dump_features_relations_to_file(self.args)
             
             print("\n✅ Step 1 completed!")
             return True
@@ -509,7 +514,7 @@ class BondPipeline:
         
         try:
             print("\n[1/1] Building graphs...")
-            build_graph()
+            build_graph(self.args)
             
             print("\n✅ Step 3 completed!")
             return True
@@ -535,7 +540,7 @@ class BondPipeline:
             
             if model_type == 'bond':
                 no_gnn = os.getenv("NO_GNN") == "1"
-                trainer = BONDTrainer(no_gnn=no_gnn)
+                trainer = BONDTrainer(args=self.args, no_gnn=no_gnn)
                 trainer.fit(datatype=self.mode)
             elif model_type == 'bond+':
                 trainer = ESBTrainer()
@@ -562,16 +567,20 @@ class BondPipeline:
     def step5_evaluation(self):
         """
         Step 5: Multi-Metric Evaluation
+        Esegue la valutazione completa utilizzando il framework di Kim (2019)
+        e salva i risultati in formato JSON ed Excel.
         """
         print("\n" + "="*70)
         print("📊 STEP 5: MULTI-METRIC EVALUATION")
         print("="*70)
         
+        # Gestione modalità di valutazione (train/valid/test)
         if self.eval_mode != self.mode:
             print(f"\n⚠️  Using separate evaluation mode:")
             print(f"   Model trained on: {self.mode}")
             print(f"   Evaluating on: {self.eval_mode}")
 
+        # Controllo file delle predizioni
         if 'predictions' not in self.results:
             pred_file = self.base_path.parent / 'out' / 'res.json'
             if not pred_file.exists():
@@ -579,46 +588,54 @@ class BondPipeline:
                 return False
             self.results['predictions'] = str(pred_file)
         
+        # Recupero del Ground Truth corretto
         gt_file = self._get_ground_truth_file(mode=self.eval_mode)
         if gt_file is None:
             print(f"⚠️  Ground truth not available for mode '{self.eval_mode}'")
             return False
         
-        print(f"\nPredictions: {self.results['predictions']}")
+        print(f"\nPredictions:  {self.results['predictions']}")
         print(f"Ground truth: {gt_file}")
         
         try:
             from evaluate_BOND import MultiMetricEvaluator
             
+            # Inizializzazione Evaluator
             evaluator = MultiMetricEvaluator(
                 self.results['predictions'],
                 str(gt_file)
             )
             
-            results = evaluator.evaluate_all_metrics()
+            # Esecuzione del calcolo (allineamento dinamico incluso)
+            results = evaluator.evaluate()
             
-            if not self.config['hyperopt_mode']:
+            # Salvataggio metriche per report finale e Pipeline
+            self.results['metrics'] = results
+
+            # STAMPA RISULTATI (Verbose mode)
+            if not self.config.get('hyperopt_mode', False):
                 evaluator.print_results(detailed=True)
             else:
-                print(f"\n  Composite Score: {results['composite_score']:.4f}")
-                print(f"  Pairwise-F1:     {results['pairwise']['f1']:.4f}")
-                print(f"  K-metric:        {results['k_metric']['k']:.4f}")
-                print(f"  Cluster-F1:      {results['cluster']['f1']:.4f}")
-            
-            output_dir = Path('evaluation_results') 
-            output_dir.mkdir(exist_ok=True)
+                score = results.get('composite_score', 0.0)
+                p_f1 = results.get('pairwise', {}).get('f1', 0.0)
+                b3_f1 = results.get('b3', {}).get('f1', 0.0) 
+                print(f"\n⚡ Eval: Composite={score:.4f}, Pairwise-F1={p_f1:.4f}, B3-F1={b3_f1:.4f}")
 
-            output_file = output_dir / 'evaluation_results.json'
-            evaluator.save_results(output_file)
             
-            self.results['evaluation'] = str(output_file)
-            self.results['metrics'] = results
+            output_dir = Path('evaluation_results')
+            output_dir.mkdir(exist_ok=True)
+            json_output = output_dir / 'evaluation_results.json'
+            evaluator.save_results(json_output)
+
+            self.results['evaluation'] = str(json_output)
+
+            #self.results['excel_report'] = excel_path
             
             print("\n✅ Step 5 completed!")
             return True
             
         except Exception as e:
-            print(f"⚠️  Step 5 warning: {e}")
+            print(f"⚠️  Step 5 failed: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -710,6 +727,7 @@ class BondPipeline:
         
         return True
     
+    
     def _get_ground_truth_file(self, mode=None):
         """
         Trova il file ground truth per il mode specificato
@@ -733,7 +751,7 @@ class BondPipeline:
         
         return gt_file if gt_file.exists() else None
         
-    def _print_summary(self):
+    def print_summary(self):
         print("\n📋 PIPELINE SUMMARY")
         print("="*70)
         
@@ -748,8 +766,6 @@ class BondPipeline:
                 print(f"\n   📊 Metrics:")
                 print(f"      Composite Score: {metrics.get('composite_score', 0):.4f}")
                 print(f"      Pairwise-F1:     {metrics.get('pairwise', {}).get('f1', 0):.4f}")
-                print(f"      K-metric:        {metrics.get('k_metric', {}).get('k', 0):.4f}")
-                print(f"      Cluster-F1:      {metrics.get('cluster', {}).get('f1', 0):.4f}")
         
         if 'filtered_predictions' in self.results:
             print(f"✅ Filtered predictions: {Path(self.results['filtered_predictions']).name}")
@@ -764,9 +780,25 @@ class BondPipeline:
         return self.results['metrics']
 
 
+def _apply_env_overrides(args):
+    """
+    Applica le variabili d'ambiente che sovrascrivono i parametri di args.
+    Chiamato UNA SOLA VOLTA subito dopo set_params(), prima di passare args
+    alla pipeline. In questo modo tutti i moduli vedono sempre lo stesso args.
+    """
+    # USE_CITATIONS: necessario perché argparse store_true non accetta --use_citations False
+    _env_cit = os.environ.get("USE_CITATIONS")
+    if _env_cit is not None:
+        args.use_citations = (_env_cit == "1")
+        if not args.use_citations:
+            args.rel_on = args.rel_on.replace('c', '').replace('i', '')
+
+
 def run_single_training():
     """Modalità single training: esegue pipeline completa una volta"""
-    pipeline = BondPipeline()
+    args = set_params()
+    _apply_env_overrides(args)
+    pipeline = BondPipeline(args)
     pipeline.interactive_configuration()
     
     success = pipeline.run_full_pipeline()
@@ -781,7 +813,9 @@ def run_single_training():
 
 def run_for_hyperopt():
     """Modalità hyperopt: esegue solo training+evaluation"""
-    pipeline = BondPipeline()
+    args = set_params()
+    _apply_env_overrides(args)
+    pipeline = BondPipeline(args)
     success = pipeline.run_full_pipeline()
     
     if not success:
@@ -792,9 +826,7 @@ def run_for_hyperopt():
     if metrics:
         print(f"\n📊 METRICS FOR OPTUNA:")
         print(f"   Composite Score: {metrics.get('composite_score', 0):.4f}")
-        print(f"   Pairwise-F1:     {metrics.get('pairwise', {}).get('f1', 0):.4f}")
-        print(f"   K-metric:        {metrics.get('k_metric', {}).get('k', 0):.4f}")
-    
+        print(f"   Pairwise-F1:     {metrics.get('pairwise', {}).get('f1', 0):.4f}")    
     return True
 
 
