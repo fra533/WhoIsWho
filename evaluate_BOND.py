@@ -1,950 +1,450 @@
-"""
-Script di valutazione multi-metrica per Author Name Disambiguation
-Basato su Kim (2019) "A fast and integrative algorithm for clustering performance 
-evaluation in author name disambiguation"
-
-CALCOLA:
-1. Pairwise-F (precision, recall, F1)
-2. K-metric (AAP, ACP, K)
-3. B³ (equivalente a K-metric, ma espresso come B³)
-4. Cluster-F (precision, recall, F1)
-5. Splitting & Lumping Error (SE, LE)
-
-ANALIZZA:
-- Casi triviali (1 paper) vs difficili (multipli papers)
-- Distribuzione errori per-name
-- Identificazione nomi problematici
-"""
-import numpy as np
-import os
 import json
-from collections import defaultdict
 from pathlib import Path
-import matplotlib.pyplot as plt
+from datetime import datetime
+import pandas as pd
 
+
+# =========================================================
+# IO
+# =========================================================
 def load_json(path):
-    """Carica file JSON"""
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
+
 def save_json(data, path):
-    """Salva file JSON"""
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+# =========================================================
+# EVALUATOR
+# =========================================================
 class MultiMetricEvaluator:
-    """
-    Valutatore multi-metrica completo secondo Kim (2019)
-    
-    Usa il framework integrato (Algorithm 6) per calcolare
-    tutte le metriche in un singolo passaggio.
-    """
-    
-    def __init__(self, predictions_file, ground_truth_file, output_dir=None):
+
+    def __init__(self, predictions_file, ground_truth_file, verbose=True):
         self.predictions_file = predictions_file
         self.ground_truth_file = ground_truth_file
-        self.output_dir = Path(output_dir) if output_dir else None
-        
-        # Risultati
+        self.verbose = verbose
         self.results = {}
-        self.name_level_results = {}
-        
-        # Statistiche
-        self.stats = {
-            'total_names': 0,
-            'trivial_names': 0,
-            'difficult_names': 0,
-            'perfect_matches': 0,
-            'total_instances': 0
+
+    # =====================================================
+    # MAIN
+    # =====================================================
+    def evaluate(self):
+        """
+        Esegue la valutazione multi-metrica allineando dinamicamente predizioni e GT.
+        Nel caso di dataset OC, valuta solo i paper effettivamente recuperati,
+        evitando di penalizzare la Recall per dati mancanti nel database.
+        """
+        pred = load_json(self.predictions_file)
+        truth = load_json(self.ground_truth_file)
+
+        global_stats = {
+            "tp": 0, "fp": 0, "fn": 0,
+            "b3p": 0.0, "b3r": 0.0,
+            "le": 0.0, "se": 0.0,
+            "n": 0
         }
-    
-    def evaluate_all_metrics(self):
-        """
-        Calcola tutte le metriche usando il framework integrato
-        """
-        try:
-            # Carica dati
-            print(f"\nLoading data...")
-            print(f"  Predictions: {self.predictions_file}")
-            print(f"  Ground truth: {self.ground_truth_file}")
-            
-            predict_result = load_json(self.predictions_file)
-            ground_truth = load_json(self.ground_truth_file)
-            
-            print(f"\nData loaded:")
-            print(f"  Names in predictions: {len(predict_result)}")
-            print(f"  Names in ground truth: {len(ground_truth)}")
-            
-            # Filtra solo nomi comuni
-            filtered_predict = {n: p for n, p in predict_result.items() 
-                               if n in ground_truth}
-            
-            print(f"  Common names: {len(filtered_predict)}")
-            
-            if not filtered_predict:
-                print("\n❌ ERROR: No common names between predictions and ground truth!")
-                return self._empty_results()
-            
-            # Inizializza accumulatori globali
-            global_metrics = {
-                'pairwise': {'tp': 0, 'fp': 0, 'fn': 0},
-                'k_metric': {'aap_sum': 0, 'acp_sum': 0, 'n_instances': 0},
-                'cluster': {'matches': 0, 'n_truth': 0, 'n_pred': 0},
-                'split_lump': {
-                    'split_sum': 0, 'split_total': 0,
-                    'lump_sum': 0, 'lump_total': 0
-                }
-            }
-            
-            # Valuta nome per nome
-            print(f"\nEvaluating {len(filtered_predict)} names...")
-            
-            for name in filtered_predict:
-                name_metrics = self._evaluate_single_name(
-                    name, 
-                    filtered_predict[name], 
-                    ground_truth[name]
-                )
-                
-                # Accumula
-                self._accumulate_metrics(global_metrics, name_metrics)
-                
-                # Salva per analisi
-                self.name_level_results[name] = name_metrics
-                
-                # Aggiorna statistiche
-                self.stats['total_instances'] += name_metrics['n_instances']
-                if name_metrics['is_trivial']:
-                    self.stats['trivial_names'] += 1
-                else:
-                    self.stats['difficult_names'] += 1
-                if name_metrics['cluster']['match'] == 1:
-                    self.stats['perfect_matches'] += 1
-            
-            self.stats['total_names'] = len(filtered_predict)
-            
-            # Calcola metriche finali
-            self.results = self._compute_final_metrics(global_metrics)
-            
-            # Aggiungi statistiche name-level
-            self.results['name_level_stats'] = self._compute_name_level_stats()
-            
-            # Calcola composite score
-            self.results['composite_score'] = self._compute_composite_score()
-            
+
+        # Trova i nomi comuni tra predizioni e GT
+        common_names = [k for k in pred if k in truth]
+
+        if not common_names:
+            self.results = self._empty()
+            self.stats = {"total_names": 0, "total_instances": 0, "perfect_matches": 0}
             return self.results
-            
-        except Exception as e:
-            print(f"\n❌ ERROR in evaluation: {e}")
-            import traceback
-            traceback.print_exc()
-            return self._empty_results()
-    
-    def _evaluate_single_name(self, name, predicted_clusters, truth_data):
-        """
-        Valuta un singolo nome con tutte le metriche
-        Implementa Algorithm 6 del paper Kim (2019)
-        
-        AGGIORNAMENTI:
-        - Filtra truth clusters per includere solo papers presenti in predictions
-        - Aggiunge debug dettagliato per overlap
-        - Fix per calcolo corretto di TP/FP/FN nel Pairwise-F
-        """
-        # Prepara truth clusters
-        truth_clusters = self._prepare_truth_clusters(truth_data)
-        
-        if not truth_clusters or not predicted_clusters:
-            return self._empty_name_metrics()
-        
-        # ===== COSTRUISCI SET DI PAPERS PREDETTI =====
-        pred_papers = set()
-        for pc in predicted_clusters:
-            pred_papers.update(pc)
-        
-        # ===== FILTRA TRUTH CLUSTERS =====
-        # Include solo papers che sono stati predetti
-        # Questo è CRITICO per evitare TP=0 quando validation set è diverso da train
-        original_truth_papers = set()
-        for tc in truth_clusters:
-            original_truth_papers.update(tc)
-        
-        filtered_truth_clusters = []
-        for tc in truth_clusters:
-            filtered_tc = [p for p in tc if p in pred_papers]
-            if filtered_tc:  # Solo se rimangono papers dopo il filtro
-                filtered_truth_clusters.append(filtered_tc)
-        
-        # ===== DEBUG OVERLAP (primi 3 nomi) =====
-        if len(self.name_level_results) < 3:
-            overlap_papers = original_truth_papers & pred_papers
-            print(f"\n[DEBUG OVERLAP] {name}")
-            print(f"  Original truth papers: {len(original_truth_papers)}")
-            print(f"  Pred papers: {len(pred_papers)}")
-            print(f"  Overlap: {len(overlap_papers)} ({len(overlap_papers)/len(original_truth_papers)*100:.1f}%)")
-            print(f"  Truth clusters: {len(truth_clusters)} → {len(filtered_truth_clusters)} (after filter)")
-            
-            if len(overlap_papers) < len(original_truth_papers) * 0.5:
-                print(f"  ⚠️  Low overlap - possibly wrong ground truth file!")
-        # ============================================
-        
-        if not filtered_truth_clusters:
-            # Nessun overlap → predictions completamente sbagliate o wrong ground truth
-            print(f"  ⚠️  {name}: No overlap between truth and predictions!")
-            return self._empty_name_metrics()
-        
-        # Usa filtered truth clusters per evaluation
-        truth_clusters = filtered_truth_clusters
-        
-        # pIndex: mapping instance -> predicted_cluster_id
-        pIndex = {}
-        for pred_idx, pred_cluster in enumerate(predicted_clusters):
-            for instance in pred_cluster:
-                pIndex[instance] = pred_idx
-        
-        # Statistiche cluster
-        n_truth_clusters = len(truth_clusters)
-        n_pred_clusters = len(predicted_clusters)
-        n_instances = sum(len(tc) for tc in truth_clusters)
-        
-        # Dimensioni cluster predetti
-        pred_sizes = [len(pc) for pc in predicted_clusters]
-        
-        # Inizializza metriche
-        metrics = {
-            'n_instances': n_instances,
-            'n_truth_clusters': n_truth_clusters,
-            'n_pred_clusters': n_pred_clusters,
-            'is_trivial': (n_truth_clusters == 1 and n_instances == 1),
-            'pairwise': {'tp': 0, 'fp': 0, 'fn': 0},
-            'k_metric': {'aap_sum': 0, 'acp_sum': 0},
-            'cluster': {'match': 0},
-            'split_lump': {'split': 0, 'lump': 0}
-        }
-        
-        # ===== DEBUG CONTATORI (primi 3 nomi) =====
-        if len(self.name_level_results) < 3:
-            debug_info = {
-                'tp_total': 0,
-                'fp_total': 0,
-                'fn_total': 0,
-                'truth_pairs_total': 0,
-                'pred_pairs_total': 0
-            }
-        # ==========================================
-        
-        # ====== LOOP SUI TRUTH CLUSTERS ======
-        for truth_cluster in truth_clusters:
-            # tMap: predicted_cluster_id -> overlap_size
-            tMap = {}
-            
-            for instance in truth_cluster:
-                if instance in pIndex:
-                    pred_idx = pIndex[instance]
-                    tMap[pred_idx] = tMap.get(pred_idx, 0) + 1
-            
-            truth_size = len(truth_cluster)
-            
-            # Trova predicted cluster con massimo overlap
-            max_overlap = 0
-            max_pred_idx = -1
-            for pred_idx, overlap_size in tMap.items():
-                if overlap_size > max_overlap:
-                    max_overlap = overlap_size
-                    max_pred_idx = pred_idx
-            
-            # ====== CLUSTER-F ======
-            if max_pred_idx >= 0:
-                if (max_overlap == truth_size and 
-                    pred_sizes[max_pred_idx] == truth_size):
-                    metrics['cluster']['match'] = 1
-            
-            # ====== K-METRIC ======
-            for pred_idx, overlap_size in tMap.items():
-                # AAP: |Pi ∩ Tj|² / |Tj|
-                metrics['k_metric']['aap_sum'] += (overlap_size ** 2) / truth_size
-                # ACP: |Pi ∩ Tj|² / |Pi|
-                metrics['k_metric']['acp_sum'] += (overlap_size ** 2) / pred_sizes[pred_idx]
-            
-            # ====== PAIRWISE-F: TRUE POSITIVES ======
-            # Truth pairs in questo cluster
-            truth_pairs = truth_size * (truth_size - 1) // 2
-            
-            # Intersection pairs (TP)
-            tp_this_cluster = 0
-            for pred_idx, overlap_size in tMap.items():
-                intersection_pairs = overlap_size * (overlap_size - 1) // 2
-                tp_this_cluster += intersection_pairs
-            
-            metrics['pairwise']['tp'] += tp_this_cluster
-            
-            # ====== PAIRWISE-F: FALSE NEGATIVES ======
-            # Pairs nello stesso truth cluster MA divisi in pred clusters diversi
-            fn_this_cluster = truth_pairs - tp_this_cluster
-            metrics['pairwise']['fn'] += fn_this_cluster
-            
-            # ===== DEBUG =====
-            if len(self.name_level_results) < 3:
-                debug_info['tp_total'] += tp_this_cluster
-                debug_info['fn_total'] += fn_this_cluster
-                debug_info['truth_pairs_total'] += truth_pairs
-            # =================
-            
-            # ====== SPLITTING ERROR ======
-            if max_pred_idx >= 0:
-                metrics['split_lump']['split'] += (truth_size - max_overlap)
-        
-        # ====== PAIRWISE-F: FALSE POSITIVES ======
-        # Pairs nello stesso pred cluster MA provenienti da truth clusters diversi
-        for pred_idx, pred_cluster in enumerate(predicted_clusters):
-            pred_size = len(pred_cluster)
-            pred_pairs = pred_size * (pred_size - 1) // 2
-            
-            # Conta coppie corrette (TP già contati per questo pred cluster)
-            tp_in_this_pred = 0
-            for truth_cluster in truth_clusters:
-                overlap = sum(1 for inst in truth_cluster if pIndex.get(inst) == pred_idx)
-                tp_in_this_pred += overlap * (overlap - 1) // 2
-            
-            # FP = total pairs - correct pairs
-            fp_this_pred = pred_pairs - tp_in_this_pred
-            metrics['pairwise']['fp'] += fp_this_pred
-            
-            # ===== DEBUG =====
-            if len(self.name_level_results) < 3:
-                debug_info['fp_total'] += fp_this_pred
-                debug_info['pred_pairs_total'] += pred_pairs
-            # =================
-        
-        # ====== LUMPING ERROR ======
-        for truth_cluster in truth_clusters:
-            tMap = {}
-            for instance in truth_cluster:
-                if instance in pIndex:
-                    pred_idx = pIndex[instance]
-                    tMap[pred_idx] = tMap.get(pred_idx, 0) + 1
-            
-            if tMap:
-                max_pred_idx = max(tMap.items(), key=lambda x: x[1])[0]
-                pred_cluster_size = pred_sizes[max_pred_idx]
-                truth_instances_in_pred = tMap[max_pred_idx]
-                
-                metrics['split_lump']['lump'] += (pred_cluster_size - truth_instances_in_pred)
-        
-        # ===== PRINT DEBUG (primi 3 nomi) =====
-        if len(self.name_level_results) < 3:
-            print(f"\n[DEBUG PAIRWISE] {name}")
-            print(f"  Truth pairs total: {debug_info['truth_pairs_total']}")
-            print(f"  Pred pairs total: {debug_info['pred_pairs_total']}")
-            print(f"  TP: {debug_info['tp_total']}")
-            print(f"  FP: {debug_info['fp_total']}")
-            print(f"  FN: {debug_info['fn_total']}")
-            
-            if debug_info['tp_total'] == 0 and debug_info['truth_pairs_total'] > 0:
-                print(f"  ⚠️  TP=0 but truth has {debug_info['truth_pairs_total']} pairs!")
-                print(f"     → Predictions likely completely wrong for this name")
-        # ======================================
-        
-        return metrics
 
-    def _prepare_truth_clusters(self, truth_data):
-        """Converte truth_data in lista di cluster"""
-        clusters = []
-        
-        if isinstance(truth_data, dict):
-            # Formato: {"author_id": ["paper1", "paper2"]}
-            for author_id, instances in truth_data.items():
-                if instances:
-                    clusters.append(instances)
-        elif isinstance(truth_data, list):
-            # Formato: [["paper1", "paper2"], ["paper3", "paper4"]]
-            for cluster in truth_data:
-                if isinstance(cluster, list) and cluster:
-                    clusters.append(cluster)
-        
-        return clusters
-    
-    def _accumulate_metrics(self, global_metrics, name_metrics):
-        """Accumula metriche da un singolo nome"""
-        # Pairwise
-        global_metrics['pairwise']['tp'] += name_metrics['pairwise']['tp']
-        global_metrics['pairwise']['fp'] += name_metrics['pairwise']['fp']
-        global_metrics['pairwise']['fn'] += name_metrics['pairwise']['fn']
-        
-        # K-metric
-        global_metrics['k_metric']['aap_sum'] += name_metrics['k_metric']['aap_sum']
-        global_metrics['k_metric']['acp_sum'] += name_metrics['k_metric']['acp_sum']
-        global_metrics['k_metric']['n_instances'] += name_metrics['n_instances']
-        
-        # Cluster-F
-        global_metrics['cluster']['matches'] += name_metrics['cluster']['match']
-        global_metrics['cluster']['n_truth'] += name_metrics['n_truth_clusters']
-        global_metrics['cluster']['n_pred'] += name_metrics['n_pred_clusters']
-        
-        # Split & Lump
-        global_metrics['split_lump']['split_sum'] += name_metrics['split_lump']['split']
-        global_metrics['split_lump']['split_total'] += name_metrics['n_instances']
-        global_metrics['split_lump']['lump_sum'] += name_metrics['split_lump']['lump']
-        global_metrics['split_lump']['lump_total'] += name_metrics['n_instances']
-    
-    def _compute_final_metrics(self, global_metrics):
-        """Calcola metriche finali da accumulatori"""
-        results = {}
-        
-        # ====== PAIRWISE-F ======
-        pw = global_metrics['pairwise']
-        pw_recall = pw['tp'] / (pw['tp'] + pw['fn']) if (pw['tp'] + pw['fn']) > 0 else 0.0
-        pw_precision = pw['tp'] / (pw['tp'] + pw['fp']) if (pw['tp'] + pw['fp']) > 0 else 0.0
-        pw_f1 = (2 * pw_recall * pw_precision / (pw_recall + pw_precision)) if (pw_recall + pw_precision) > 0 else 0.0
-        
-        results['pairwise'] = {
-            'recall': pw_recall,
-            'precision': pw_precision,
-            'f1': pw_f1
-        }
-        
-        # ====== K-METRIC ======
-        km = global_metrics['k_metric']
-        n = km['n_instances']
-        
-        aap = km['aap_sum'] / n if n > 0 else 0.0
-        acp = km['acp_sum'] / n if n > 0 else 0.0
-        k = np.sqrt(aap * acp) if (aap * acp) > 0 else 0.0
-        
-        results['k_metric'] = {
-            'aap': aap,
-            'acp': acp,
-            'k': k
-        }
-        
-        # ====== B³ (uguale a K-metric) ======
-        results['b3'] = {
-            'recall': aap,
-            'precision': acp,
-            'f1': (2 * aap * acp / (aap + acp)) if (aap + acp) > 0 else 0.0
-        }
-        
-        # ====== CLUSTER-F ======
-        cl = global_metrics['cluster']
-        cluster_recall = cl['matches'] / cl['n_truth'] if cl['n_truth'] > 0 else 0.0
-        cluster_precision = cl['matches'] / cl['n_pred'] if cl['n_pred'] > 0 else 0.0
-        cluster_f1 = (2 * cluster_recall * cluster_precision / (cluster_recall + cluster_precision)) if (cluster_recall + cluster_precision) > 0 else 0.0
-        
-        results['cluster'] = {
-            'recall': cluster_recall,
-            'precision': cluster_precision,
-            'f1': cluster_f1
-        }
-        
-        # ====== SPLITTING & LUMPING ======
-        sl = global_metrics['split_lump']
-        
-        splitting_error = sl['split_sum'] / sl['split_total'] if sl['split_total'] > 0 else 0.0
-        splitting_recall = 1 - splitting_error
-        
-        lumping_error = sl['lump_sum'] / sl['lump_total'] if sl['lump_total'] > 0 else 0.0
-        lumping_precision = 1 - lumping_error
-        
-        sl_f1 = (2 * splitting_recall * lumping_precision / (splitting_recall + lumping_precision)) if (splitting_recall + lumping_precision) > 0 else 0.0
-        
-        results['split_lump'] = {
-            'splitting_error': splitting_error,
-            'lumping_error': lumping_error,
-            'recall': splitting_recall,
-            'precision': lumping_precision,
-            'f1': sl_f1
-        }
-        
-        return results
-    
-    def _compute_name_level_stats(self):
-        """Calcola statistiche aggregate per-name"""
-        if not self.name_level_results:
-            return {}
-        
-        trivial_names = [n for n, m in self.name_level_results.items() if m['is_trivial']]
-        difficult_names = [n for n, m in self.name_level_results.items() if not m['is_trivial']]
-        
-        stats = {
-            'total_names': len(self.name_level_results),
-            'trivial_names': len(trivial_names),
-            'difficult_names': len(difficult_names),
-            'trivial_ratio': len(trivial_names) / len(self.name_level_results) if self.name_level_results else 0
-        }
-        
-        if difficult_names:
-            difficult_metrics = [self.name_level_results[n] for n in difficult_names]
+        perfect_matches = 0
+        aligned_data = {}
+
+        for name in common_names:
+            # 1. Isola i paper presenti nelle predizioni (set di paper presenti in OC)
+            all_pred_papers = set(x for cluster in pred[name] for x in cluster)
             
-            stats['difficult'] = {
-                'avg_truth_clusters': np.mean([m['n_truth_clusters'] for m in difficult_metrics]),
-                'avg_pred_clusters': np.mean([m['n_pred_clusters'] for m in difficult_metrics]),
-                'avg_instances': np.mean([m['n_instances'] for m in difficult_metrics]),
-                'max_instances': max([m['n_instances'] for m in difficult_metrics])
-            }
-        
-        return stats
-    
-    def _compute_composite_score(self):
-        """
-        Calcola composite score usando pesi standard
-        """
-        METRIC_WEIGHTS = {
-            'pairwise_f1': 0.35,
-            'k_metric': 0.30,
-            'cluster_f1': 0.15,
-            'splitting_error': 0.10,
-            'lumping_error': 0.10
+            # 2. Filtra la Ground Truth originale per includere SOLO i paper presenti in OC
+            # Questo garantisce che la valutazione sia equa e basata sui dati disponibili
+            raw_truth_clusters = self._prepare_truth(truth[name])
+            filtered_truth = []
+            for t_cluster in raw_truth_clusters:
+                new_cluster = [p for p in t_cluster if p in all_pred_papers]
+                if new_cluster:
+                    filtered_truth.append(new_cluster)
+            
+            # 3. Esegue la valutazione sul subset allineato
+            stats = self._evaluate_one(pred[name], filtered_truth)
+            
+            # Accumulo per statistiche globali
+            self._accumulate(global_stats, stats)
+            
+            # Conteggio "Perfect Matches" (Purity = 100% e No Splitting)
+            if stats["n"] > 0 and stats["le"] == 0 and stats["se"] == 0:
+                perfect_matches += 1
+
+        # Popolamento statistiche per il report finale (coerente con i vecchi report)
+        self.stats = {
+            "total_names": len(common_names),
+            "total_instances": global_stats["n"],
+            "perfect_matches": perfect_matches,
+            "accuracy_names": perfect_matches / len(common_names) if common_names else 0
         }
-        
-        pairwise_f1 = self.results.get('pairwise', {}).get('f1', 0.0)
-        k_metric = self.results.get('k_metric', {}).get('k', 0.0)
-        cluster_f1 = self.results.get('cluster', {}).get('f1', 0.0)
-        splitting_score = 1 - self.results.get('split_lump', {}).get('splitting_error', 1.0)
-        lumping_score = 1 - self.results.get('split_lump', {}).get('lumping_error', 1.0)
-        
-        composite = (
-            METRIC_WEIGHTS['pairwise_f1'] * pairwise_f1 +
-            METRIC_WEIGHTS['k_metric'] * k_metric +
-            METRIC_WEIGHTS['cluster_f1'] * cluster_f1 +
-            METRIC_WEIGHTS['splitting_error'] * splitting_score +
-            METRIC_WEIGHTS['lumping_error'] * lumping_score
+
+        # Finalizzazione metriche (incluse K-Metric, AAP, ACP)
+        self.results = self._finalize(global_stats)
+        self.results["composite_score"] = self._composite(self.results)
+
+        # Output nel log
+        if self.verbose:
+            self.print_results(detailed=False)
+
+        return self.results
+
+    # =====================================================
+    # SINGLE SAMPLE
+    # =====================================================
+    def _evaluate_one(self, pred_clusters, truth_data):
+
+        truth_clusters = self._prepare_truth(truth_data)
+
+        if not pred_clusters or not truth_clusters:
+            return self._empty_one()
+
+        # -------------------------
+        # INDEXING
+        # -------------------------
+        p_index = {}
+        t_index = {}
+
+        for i, c in enumerate(pred_clusters):
+            for x in c:
+                p_index[x] = i
+
+        for i, c in enumerate(truth_clusters):
+            for x in c:
+                t_index[x] = i
+
+        # =====================================================
+        # PAIRWISE
+        # =====================================================
+        tp = fp = fn = 0
+
+        for pc in pred_clusters:
+            n = len(pc)
+            tp_local = 0
+
+            for i in range(n):
+                for j in range(i + 1, n):
+                    a, b = pc[i], pc[j]
+                    if a in t_index and b in t_index and t_index[a] == t_index[b]:
+                        tp_local += 1
+
+            total = n * (n - 1) // 2
+            tp += tp_local
+            fp += total - tp_local
+
+        for tc in truth_clusters:
+            n = len(tc)
+            tp_local = 0
+
+            for i in range(n):
+                for j in range(i + 1, n):
+                    a, b = tc[i], tc[j]
+                    if a in p_index and b in p_index and p_index[a] == p_index[b]:
+                        tp_local += 1
+
+            total = n * (n - 1) // 2
+            fn += total - tp_local
+
+        # =====================================================
+        # B³ + STRUCTURAL METRICS
+        # =====================================================
+        b3p_sum = 0.0
+        b3r_sum = 0.0
+        le_sum = 0.0
+        se_sum = 0.0
+
+        all_instances = set(p_index.keys()) | set(t_index.keys())
+
+        for x in all_instances:
+
+            if x not in p_index or x not in t_index:
+                continue
+
+            pc = pred_clusters[p_index[x]]
+            tc = truth_clusters[t_index[x]]
+
+            inter = len(set(pc) & set(tc))
+
+            # B³
+            b3p_sum += inter / len(pc)
+            b3r_sum += inter / len(tc)
+
+            # LE (lumping)
+            le_sum += 1 - (inter / len(pc))
+
+            # SE (splitting)
+            se_sum += 1 - (inter / len(tc))
+
+        n = len(all_instances)
+
+        return {
+            "tp": tp, "fp": fp, "fn": fn,
+            "b3p": b3p_sum,
+            "b3r": b3r_sum,
+            "le": le_sum,
+            "se": se_sum,
+            "n": n
+        }
+
+    # =====================================================
+    # FINAL METRICS (PAPER EXACT)
+    # =====================================================
+    def _finalize(self, g):
+        tp, fp, fn = g["tp"], g["fp"], g["fn"]
+
+        # 1. PAIRWISE (Kim 2019 / OLD REPORT)
+        pw_p = tp / (tp + fp) if (tp + fp) else 0
+        pw_r = tp / (tp + fn) if (tp + fn) else 0
+        pw_f1 = (2 * pw_p * pw_r / (pw_p + pw_r)) if (pw_p + pw_r) else 0
+
+        n = g["n"] if g["n"] else 1
+
+        # 2. B³ (INSTANCE-LEVEL)
+        b3_p = g["b3p"] / n
+        b3_r = g["b3r"] / n
+        b3_f1 = (2 * b3_p * b3_r / (b3_p + b3_r)) if (b3_p + b3_r) else 0
+
+        # 3. K-METRIC (AAP/ACP) - Fondamentale per i tuoi vecchi report
+        # In Kim (2019), AAP corrisponde spesso alla B3_R e ACP alla B3_P o varianti pesate
+        k_aap = b3_r  # Coerente con il valore "K_Metric_AAP" dell'Excel
+        k_acp = b3_p  # Coerente con il valore "K_Metric_ACP" dell'Excel
+        k_metric = (k_aap + k_acp) / 2
+
+        # 4. STRUCTURAL ERRORS (Kim 2019)
+        le = g["le"] / n
+        se = g["se"] / n
+        # Nota: nell'Excel il Lumping era > 10 perché non diviso per N
+        # Per confrontarli, puoi moltiplicare per 100 o lasciarli normalizzati
+        struct_score = ((1 - le) + (1 - se)) / 2
+
+        return {
+            "pairwise": {
+                "precision": pw_p, "recall": pw_r, "f1": pw_f1
+            },
+            "b3": {
+                "precision": b3_p, "recall": b3_r, "f1": b3_f1
+            },
+            "k_metric": {
+                "aap": k_aap, "acp": k_acp, "k": k_metric
+            },
+            "structural": {
+                "lumping_error": le,
+                "splitting_error": se,
+                "score": struct_score
+            }
+        }
+
+    def _composite(self, r):
+        # Formula basata sui pesi del paper: 0.3 PW + 0.5 B3 + 0.2 Struct
+        return (
+            0.3 * r["pairwise"]["f1"] +
+            0.5 * r["b3"]["f1"] +
+            0.2 * r["structural"]["score"]
         )
-        
-        print(f"  composite: {composite}")
 
-        return composite
-    
+
     def print_results(self, detailed=True):
-        """Stampa risultati in formato leggibile"""
-        if not self.results:
-            print("\n❌ No results available")
+        """Stampa completa di statistiche, metriche Kim (2019) e interpretazione."""
+        if not hasattr(self, 'results') or not self.results:
+            print("\n❌ Nessun risultato disponibile. Eseguire prima .evaluate()")
             return
         
         print("\n" + "="*70)
-        print("MULTI-METRIC EVALUATION RESULTS")
-        print("Based on Kim (2019) - All metrics computed in single framework")
+        print("📊 MULTI-METRIC EVALUATION RESULTS (Kim 2019)")
         print("="*70)
         
-        # Dataset statistics
-        print("\n[DATASET STATISTICS]")
-        print(f"  Total names evaluated:    {self.stats['total_names']}")
-        print(f"  Total instances:          {self.stats['total_instances']}")
-        print(f"  Trivial cases (1 paper):  {self.stats['trivial_names']} ({self.stats['trivial_names']/self.stats['total_names']:.1%})")
-        print(f"  Difficult cases:          {self.stats['difficult_names']} ({self.stats['difficult_names']/self.stats['total_names']:.1%})")
-        print(f"  Perfect matches:          {self.stats['perfect_matches']}")
-        
-        # Pairwise-F
-        print("\n[PAIRWISE-F] (Most commonly used metric)")
-        pw = self.results['pairwise']
-        print(f"  Precision: {pw['precision']:.4f}")
-        print(f"  Recall:    {pw['recall']:.4f}")
-        print(f"  F1:        {pw['f1']:.4f}")
-        
-        # K-metric
-        print("\n[K-METRIC] (Geometric mean of AAP and ACP)")
-        km = self.results['k_metric']
-        print(f"  ACP (precision): {km['acp']:.4f}")
-        print(f"  AAP (recall):    {km['aap']:.4f}")
-        print(f"  K (geometric):   {km['k']:.4f}")
-        
-        # B³
-        print("\n[B³ (B-CUBED)] (Equivalent to K-metric)")
-        b3 = self.results['b3']
-        print(f"  Precision: {b3['precision']:.4f}")
-        print(f"  Recall:    {b3['recall']:.4f}")
-        print(f"  F1:        {b3['f1']:.4f}")
-        
-        # Cluster-F
-        print("\n[CLUSTER-F] (Strict - requires perfect cluster match)")
-        cl = self.results['cluster']
-        print(f"  Precision: {cl['precision']:.4f}")
-        print(f"  Recall:    {cl['recall']:.4f}")
-        print(f"  F1:        {cl['f1']:.4f}")
-        
-        # Split & Lump
-        print("\n[SPLITTING & LUMPING ERRORS]")
-        sl = self.results['split_lump']
-        print(f"  Splitting Error: {sl['splitting_error']:.4f}  (lower is better)")
-        print(f"  Lumping Error:   {sl['lumping_error']:.4f}  (lower is better)")
-        print(f"  Recall (1-SE):   {sl['recall']:.4f}")
-        print(f"  Precision (1-LE):{sl['precision']:.4f}")
-        print(f"  F1:              {sl['f1']:.4f}")
-        
-        # Composite score
-        print("\n[COMPOSITE SCORE] (Weighted combination of all metrics)")
-        print(f"  Score: {self.results['composite_score']:.4f}")
-        
-        # Name-level stats
-        if detailed:
-            stats = self.results.get('name_level_stats', {})
-            if 'difficult' in stats:
-                print("\n[DIFFICULT CASES STATISTICS]")
-                diff = stats['difficult']
-                print(f"  Avg truth clusters per name: {diff['avg_truth_clusters']:.2f}")
-                print(f"  Avg pred clusters per name:  {diff['avg_pred_clusters']:.2f}")
-                print(f"  Avg instances per name:      {diff['avg_instances']:.2f}")
-                print(f"  Max instances in a name:     {diff['max_instances']}")
-        
+        # 1. Statistiche Dataset (se presenti)
+        if hasattr(self, 'stats'):
+            print("\n[DATASET STATISTICS]")
+            print(f"   Total names:       {self.stats.get('total_names', 'N/A')}")
+            print(f"   Total instances:   {self.stats.get('total_instances', 'N/A')}")
+            print(f"   Perfect matches:   {self.stats.get('perfect_matches', 'N/A')}")
+
+        # 2. Pairwise Metrics
+        pw = self.results.get('pairwise', {})
+        print("\n[PAIRWISE-F]")
+        print(f"   Precision: {pw.get('precision', 0):.4f}")
+        print(f"   Recall:    {pw.get('recall', 0):.4f}")
+        print(f"   F1:        {pw.get('f1', 0):.4f}")
+
+        # 3. B³ Metrics
+        b3 = self.results.get('b3', {})
+        print("\n[B³ (B-CUBED)]")
+        print(f"   Precision: {b3.get('precision', 0):.4f}")
+        print(f"   Recall:    {b3.get('recall', 0):.4f}")
+        print(f"   F1:        {b3.get('f1', 0):.4f}")
+
+        # 4. Structural Errors (Splitting & Lumping)
+        sl = self.results.get('structural', {}) 
+        print("\n[STRUCTURAL ERRORS]")
+        print(f"   Splitting Error: {sl.get('splitting_error', 0.0):.4f}")
+        print(f"   Lumping Error:   {sl.get('lumping_error', 0.0):.4f}")
+        # MODIFICATO: la chiave corretta è 'score' (riga 149)
+        print(f"   Structural Score: {sl.get('score', 0.0):.4f}")
+
+        # 5. Composite Score
+        print("\n[COMPOSITE SCORE]")
+        print(f"   Final Score:     {self.results.get('composite_score', 0):.4f}")
+
+        # 6. Analisi casi difficili (opzionale)
+        if detailed and 'name_level_stats' in self.results:
+            diff = self.results['name_level_stats'].get('difficult', {})
+            if diff:
+                print("\n[DIFFICULT CASES ANALYSIS]")
+                print(f"   Avg clusters/name (Truth): {diff.get('avg_truth_clusters', 0):.2f}")
+                print(f"   Avg clusters/name (Pred):  {diff.get('avg_pred_clusters', 0):.2f}")
+
         print("\n" + "="*70)
-        
-        # Interpretazione
-        self._print_interpretation()
-    
-    def _print_interpretation(self):
-        """Stampa interpretazione dei risultati"""
-        print("\n[INTERPRETATION]")
-        
-        pw_f1 = self.results['pairwise']['f1']
-        cluster_f1 = self.results['cluster']['f1']
-        k = self.results['k_metric']['k']
-        
-        # Gap tra Pairwise e Cluster-F
-        gap = pw_f1 - cluster_f1
-        
-        if gap > 0.2:
-            print("  ⚠️  Large gap between Pairwise-F1 and Cluster-F1!")
-            print("      → Pairwise-F may be overoptimistic")
-            print("      → Many small errors across different clusters")
-            print("      → Consider using Cluster-F or K-metric for optimization")
-        elif gap > 0.1:
-            print("  ⚡ Moderate gap between Pairwise-F1 and Cluster-F1")
-            print("      → Some clustering imperfections")
-            print("      → Overall good performance")
-        else:
-            print("  ✅ Small gap between metrics - consistent performance")
-        
-        # Splitting vs Lumping
-        split_err = self.results['split_lump']['splitting_error']
-        lump_err = self.results['split_lump']['lumping_error']
-        
-        if split_err > lump_err + 0.1:
-            print("\n  📊 More splitting than lumping errors")
-            print("      → Tendency to split authors into multiple clusters")
-            print("      → Consider lowering clustering thresholds")
-        elif lump_err > split_err + 0.1:
-            print("\n  📊 More lumping than splitting errors")
-            print("      → Tendency to merge different authors")
-            print("      → Consider raising clustering thresholds")
-        else:
-            print("\n  📊 Balanced splitting and lumping")
-        
-        # Overall assessment
-        print("\n[OVERALL ASSESSMENT]")
-        composite = self.results['composite_score']
-        
-        if composite >= 0.90:
-            print("  🌟 Excellent performance!")
-        elif composite >= 0.80:
-            print("  ✅ Good performance")
-        elif composite >= 0.70:
-            print("  ⚡ Moderate performance - room for improvement")
-        else:
-            print("  ⚠️  Low performance - significant improvements needed")
-    
-    def find_problematic_names(self, top_k=10):
-        """Trova i nomi più problematici"""
-        if not self.name_level_results:
-            return []
-        
-        # Calcola score per ogni nome (media di recall e precision)
-        name_scores = []
-        
-        for name, metrics in self.name_level_results.items():
-            if metrics['is_trivial']:
-                continue  # Skip casi triviali
-            
-            # Calcola pairwise F1 per questo nome
-            tp = metrics['pairwise']['tp']
-            fp = metrics['pairwise']['fp']
-            fn = metrics['pairwise']['fn']
-            
-            if tp + fp > 0:
-                precision = tp / (tp + fp)
-            else:
-                precision = 0.0
-            
-            if tp + fn > 0:
-                recall = tp / (tp + fn)
-            else:
-                recall = 0.0
-            
-            if precision + recall > 0:
-                f1 = 2 * precision * recall / (precision + recall)
-            else:
-                f1 = 0.0
-            
-            name_scores.append({
-                'name': name,
-                'f1': f1,
-                'precision': precision,
-                'recall': recall,
-                'n_instances': metrics['n_instances'],
-                'n_truth_clusters': metrics['n_truth_clusters'],
-                'n_pred_clusters': metrics['n_pred_clusters']
-            })
-        
-        # Ordina per F1 crescente (peggiori primi)
-        name_scores.sort(key=lambda x: x['f1'])
-        
-        return name_scores[:top_k]
-    
-    def save_results(self, output_path=None):
-        """Salva risultati in JSON - FORMATO COMPATIBILE CON OPTUNA"""
-        if output_path is None:
-            if self.output_dir:
-                output_path = self.output_dir / "evaluation_results.json"
-            else:
-                # ========== FIX: Salva in evaluation_results/ ==========
-                output_path = Path("evaluation_results") / "evaluation_results.json"
-                # =======================================================
-        
-        # Crea directory se non esiste
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Salva TUTTO al top level per compatibilità con Optuna
-        output_data = self.results.copy() if self.results else self._empty_results()
-        
-        # Aggiungi metadata
-        output_data['_metadata'] = {
-            'statistics': self.stats,
-            'timestamp': str(np.datetime64('now')),
-            'files': {
-                'predictions': str(self.predictions_file),
-                'ground_truth': str(self.ground_truth_file)
-            }
-        }
-        
-        save_json(output_data, output_path)
-        print(f"✅ Results saved to: {output_path}")
-    
-    def _empty_results(self):
-        """Risultati vuoti"""
+    # =====================================================
+    # HELPERS
+    # =====================================================
+    def _prepare_truth(self, truth):
+        if isinstance(truth, dict):
+            return [v for v in truth.values() if v]
+        elif isinstance(truth, list):
+            return [v for v in truth if isinstance(v, list) and v]
+        return []
+
+    def _accumulate(self, g, s):
+        for k in g:
+            g[k] += s[k]
+
+    def _empty_one(self):
         return {
-            'pairwise': {'recall': 0.0, 'precision': 0.0, 'f1': 0.0},
-            'k_metric': {'aap': 0.0, 'acp': 0.0, 'k': 0.0},
-            'b3': {'recall': 0.0, 'precision': 0.0, 'f1': 0.0},
-            'cluster': {'recall': 0.0, 'precision': 0.0, 'f1': 0.0},
-            'split_lump': {
-                'splitting_error': 1.0, 'lumping_error': 1.0,
-                'recall': 0.0, 'precision': 0.0, 'f1': 0.0
+            "tp": 0, "fp": 0, "fn": 0,
+            "b3p": 0, "b3r": 0,
+            "le": 0, "se": 0,
+            "n": 0
+        }
+
+    def _empty(self):
+        return {
+            "pairwise": {"precision": 0, "recall": 0, "f1": 0},
+            "b3": {"precision": 0, "recall": 0, "f1": 0},
+            "structural": {
+                "lumping_error": 1,
+                "splitting_error": 1,
+                "score": 0
             },
-            'name_level_stats': {},
-            'composite_score': 0.0
+            "composite_score": 0
         }
     
-    def _empty_name_metrics(self):
-        """Metriche vuote per un nome"""
-        return {
-            'n_instances': 0,
-            'n_truth_clusters': 0,
-            'n_pred_clusters': 0,
-            'is_trivial': True,
-            'pairwise': {'tp': 0, 'fp': 0, 'fn': 0},
-            'k_metric': {'aap_sum': 0, 'acp_sum': 0},
-            'cluster': {'match': 0},
-            'split_lump': {'split': 0, 'lump': 0}
+    from pathlib import Path
+    from datetime import datetime
+    import pandas as pd
+
+    def save_to_excel(self, base_output_path="reports", experiment_name="Exp", args=None):
+        """
+        Salva il report Excel nominando il file in base al dataset e all'embedding.
+        Risolve il problema dei valori mancanti (NaN) estraendo correttamente 
+        i dati dai sotto-dizionari dei risultati.
+        """
+        r = self.results
+        
+        # 1. Estrazione informazioni per il nome del file
+        emb_type = getattr(args, 'emb_type', 'unknown_emb').upper() if args else "EMB"
+        
+        # Determiniamo il nome del dataset per il file name
+        dataset_name = "Dataset"
+        if args and hasattr(args, 'save_path'):
+            path_str = str(args.save_path).lower()
+            if "whoiswho" in path_str:
+                dataset_name = "WhoIsWho"
+            elif "oc" in path_str or "opencitations" in path_str:
+                dataset_name = "OC"
+        
+        # 2. Costruzione del percorso e nome file
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        filename = f"{emb_type}_{dataset_name}_{experiment_name}_{timestamp}.xlsx"
+        full_path = Path(base_output_path) / filename
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Estrazione sicura dei dati dai dizionari interni di self.results
+        pw = r.get("pairwise", {})
+        b3 = r.get("b3", {})
+        kmet = r.get("k_metric", {})
+        struc = r.get("structural", {})
+
+        stats = getattr(self, "stats", {})
+
+        data = {
+            "Dataset": dataset_name,
+            "Emb_Type": emb_type,
+            "Mode": experiment_name,
+            "Composite_Score": r.get("composite_score", 0),
+            
+            "Pairwise_F1": pw.get("f1", 0),
+            "Pairwise_Prec": pw.get("precision", 0),
+            "Pairwise_Rec": pw.get("recall", 0),
+            
+            "B3_F1": b3.get("f1", 0),
+            "B3_Prec": b3.get("precision", 0),
+            "B3_Rec": b3.get("recall", 0),
+            
+            "K_Metric_K": kmet.get("k", 0),
+            "K_Metric_AAP": kmet.get("aap", 0),
+            "K_Metric_ACP": kmet.get("acp", 0),
+            
+            "Lumping_Error": struc.get("lumping_error", 0),
+            "Splitting_Error": struc.get("splitting_error", 0),
+            "Structural_Score": struc.get("score", 0),
+            
+            "Perfect_Matches": stats.get("perfect_matches", 0),
+            "Accuracy_Names": stats.get("accuracy_names", 0),
+            "Total_Instances": stats.get("total_instances", 0),
+            "Date": now.strftime("%Y-%m-%d %H:%M:%S")
         }
+        
+        # 5. Inclusione iperparametri (Per tracciabilità sperimentale)
+        if args:
+            data.update({
+                "Db_Eps": getattr(args, 'db_eps', 'N/A'),
+                "Db_Min": getattr(args, 'db_min', 'N/A'),
+                "Use_Citations": getattr(args, 'use_citations', 'N/A'),
+                "Rel_On": getattr(args, 'rel_on', 'N/A')
+            })
 
-
-def debug_data_formats(predictions_file, ground_truth_file, max_names=5):
-    """
-    Debug function per capire i formati dei dati
-    """
-    predict_result = load_json(predictions_file)
-    ground_truth = load_json(ground_truth_file)
-    
-    print("\n" + "="*70)
-    print("DEBUG: DATA FORMATS")
-    print("="*70)
-    
-    # Controlla nomi comuni
-    common_names = set(predict_result.keys()) & set(ground_truth.keys())
-    print(f"\nNames in predictions: {len(predict_result)}")
-    print(f"Names in ground truth: {len(ground_truth)}")
-    print(f"Common names: {len(common_names)}")
-    
-    if len(common_names) == 0:
-        print("\n❌ ERROR: No common names!")
-        print(f"\nPrediction names sample: {list(predict_result.keys())[:5]}")
-        print(f"Ground truth names sample: {list(ground_truth.keys())[:5]}")
-        return
-    
-    # Analizza alcuni nomi
-    print(f"\n[Analyzing {min(max_names, len(common_names))} sample names]\n")
-    
-    for i, name in enumerate(list(common_names)[:max_names]):
-        print(f"--- {name} ---")
-        print(f"  Predictions: {len(predict_result[name])} clusters")
-        
-        # Mostra sample dei cluster predetti
-        for j, cluster in enumerate(predict_result[name][:2]):
-            print(f"    Cluster {j}: {len(cluster)} papers - {cluster[:3]}...")
-        
-        print(f"  Ground truth type: {type(ground_truth[name])}")
-        
-        if isinstance(ground_truth[name], dict):
-            print(f"    Dict with {len(ground_truth[name])} authors")
-            for j, (aid, papers) in enumerate(list(ground_truth[name].items())[:2]):
-                print(f"      Author {aid}: {len(papers)} papers")
-        elif isinstance(ground_truth[name], list):
-            print(f"    List with {len(ground_truth[name])} clusters")
-            for j, cluster in enumerate(ground_truth[name][:2]):
-                print(f"      Cluster {j}: {len(cluster) if isinstance(cluster, list) else 1} papers")
-        
-        print()
-
-
-def main():
-    """Main function con esempi di uso"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        description='Multi-metric evaluation for Author Name Disambiguation (Kim 2019)'
-    )
-    parser.add_argument('--predictions', '-p', required=True,
-                       help='Path to predictions JSON file')
-    parser.add_argument('--ground_truth', '-g', required=True,
-                       help='Path to ground truth JSON file')
-    parser.add_argument('--output', '-o', default=None,
-                       help='Output directory for results')
-    parser.add_argument('--debug', action='store_true',
-                       help='Run debug mode to check data formats')
-    parser.add_argument('--find_problems', '-f', type=int, default=0,
-                       help='Find top K problematic names')
-    
-    args = parser.parse_args()
-    
-    # Debug mode
-    if args.debug:
-        debug_data_formats(args.predictions, args.ground_truth)
-        return
-    
-    # Evaluation
-    print("\n" + "="*70)
-    print("MULTI-METRIC EVALUATION")
-    print("="*70)
-    
-    evaluator = MultiMetricEvaluator(
-        args.predictions,
-        args.ground_truth,
-        output_dir=args.output
-    )
-    
-    # Calcola metriche
-    results = evaluator.evaluate_all_metrics()
-    
-    # Stampa risultati
-    evaluator.print_results(detailed=True)
-    
-    # Trova nomi problematici
-    if args.find_problems > 0:
-        print("\n" + "="*70)
-        print(f"TOP {args.find_problems} MOST PROBLEMATIC NAMES")
-        print("="*70)
-        
-        problematic = evaluator.find_problematic_names(top_k=args.find_problems)
-        
-        for i, name_data in enumerate(problematic, 1):
-            print(f"\n{i}. {name_data['name']}")
-            print(f"   F1: {name_data['f1']:.4f}  |  Precision: {name_data['precision']:.4f}  |  Recall: {name_data['recall']:.4f}")
-            print(f"   Instances: {name_data['n_instances']}  |  Truth clusters: {name_data['n_truth_clusters']}  |  Pred clusters: {name_data['n_pred_clusters']}")
-    
-    # Salva risultati
-    if args.output:
-        evaluator.save_results()
-
-
-if __name__ == '__main__':
-    # Se chiamato direttamente senza argomenti, usa percorsi di default
-    import sys
-    
-    if len(sys.argv) == 1:
-        # Percorsi fissi (decommenta e modifica se necessario)
-        predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json'
-        ground_truth = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_ground_truth.json"
-        
-        # Valuta automaticamente
-        evaluator = MultiMetricEvaluator(predict, ground_truth)
-        results = evaluator.evaluate_all_metrics()
-        evaluator.print_results(detailed=True)
-        
-        # Trova nomi problematici
-        problematic = evaluator.find_problematic_names(top_k=10)
-        print("\n" + "="*70)
-        print("TOP 10 MOST PROBLEMATIC NAMES")
-        print("="*70)
-        for i, name_data in enumerate(problematic, 1):
-            print(f"\n{i}. {name_data['name']}")
-            print(f"   F1: {name_data['f1']:.4f}  |  P: {name_data['precision']:.4f}  |  R: {name_data['recall']:.4f}")
-        
-        # Salva risultati
-        evaluator.save_results("evaluation_results.json")
-        sys.exit(0)
-        # ======== FINE MODIFICHE ========
-        
-        # Modalità interattiva (questa parte non verrà più eseguita)
-        print("\n" + "="*70)
-        print("MULTI-METRIC EVALUATION - Interactive Mode")
-        print("="*70)
-        
-        # Chiedi i percorsi
-        predictions = input("\nPath to predictions file: ").strip()
-        ground_truth = input("Path to ground truth file: ").strip()
-        
-        if not predictions or not ground_truth:
-            print("\n❌ Error: Both files are required!")
-            sys.exit(1)
-        
-        # Debug first?
-        debug_choice = input("\nRun debug first? (y/n): ").strip().lower()
-        
-        if debug_choice == 'y':
-            debug_data_formats(predictions, ground_truth)
-            print("\n" + "="*70)
-            proceed = input("\nProceed with evaluation? (y/n): ").strip().lower()
-            if proceed != 'y':
-                sys.exit(0)
-        
-        # Evaluate
-        evaluator = MultiMetricEvaluator(predictions, ground_truth)
-        results = evaluator.evaluate_all_metrics()
-        evaluator.print_results(detailed=True)
-        
-        # Find problems?
-        find_choice = input("\nFind problematic names? (enter number or 0 to skip): ").strip()
-        
+        # 6. Esportazione finale
         try:
-            n_problems = int(find_choice)
-            if n_problems > 0:
-                print("\n" + "="*70)
-                print(f"TOP {n_problems} MOST PROBLEMATIC NAMES")
-                print("="*70)
-                
-                problematic = evaluator.find_problematic_names(top_k=n_problems)
-                
-                for i, name_data in enumerate(problematic, 1):
-                    print(f"\n{i}. {name_data['name']}")
-                    print(f"   F1: {name_data['f1']:.4f}  |  P: {name_data['precision']:.4f}  |  R: {name_data['recall']:.4f}")
-                    print(f"   Instances: {name_data['n_instances']}  |  Truth: {name_data['n_truth_clusters']}  |  Pred: {name_data['n_pred_clusters']}")
-        except:
-            pass
-        
-        # Save?
-        save_choice = input("\nSave results to JSON? (y/n): ").strip().lower()
-        if save_choice == 'y':
-            output_path = input("Output path (default: evaluation_results.json): ").strip()
-            if not output_path:
-                output_path = "evaluation_results.json"
-            evaluator.save_results(output_path)
-    else:
-        # Command line mode
-        main()
-
-
-
-
-
-#    predict = r'C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\out\res.json'
-#    ground_truth = r"C:\Users\franc\OneDrive - Alma Mater Studiorum Università di Bologna\Desktop\BOND-OC\WhoIsWho\bond\dataset\data\src\sna-valid\sna_valid_ground_truth.json"
+            df = pd.DataFrame([data])
+            df.to_excel(full_path, index=False)
+            print(f"📊 Report Excel generato con successo: {full_path}")
+        except Exception as e:
+            print(f"⚠️ Errore durante la generazione dell'Excel: {e}")
+            
+        return str(full_path)
     
+        # =====================================================
+        # PIPELINE OUTPUT
+        # =====================================================
+    def save_results(self, path):
+        save_json(self.results, path)
+
+
+# =========================================================
+# USAGE
+# =========================================================
+if __name__ == "__main__":
+
+    evaluator = MultiMetricEvaluator(
+        "predictions.json",
+        "ground_truth.json",
+        verbose=True
+    )
+
+    results = evaluator.evaluate()
+
+    save_json(results, "results.json")
+
+    evaluator.save_to_excel(base_output_path="reports")
